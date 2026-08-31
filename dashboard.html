@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Report Generator — Kotak Neo</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --blue:#004B91;--red:#DC143C;--gold:#FFC200;
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#222536;
+  --border:#2e3148;--text:#e8eaf6;--muted:#8b90b8;
+  --success:#22c55e;--error:#ef4444;--radius:12px;
+}
+html,body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:15px;line-height:1.6;min-height:100vh}
+a{color:var(--gold);word-break:break-all}
+
+.header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 32px;display:flex;align-items:center;gap:14px;height:64px}
+.logo-badge{width:38px;height:38px;border-radius:8px;background:var(--blue);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.85rem;flex-shrink:0}
+.logo-title{font-size:1.1rem;font-weight:700;letter-spacing:-0.3px}
+.logo-title span{color:var(--gold)}
+.logo-sub{font-size:0.78rem;color:var(--muted)}
+
+.main{padding:32px;max-width:680px;margin:0 auto}
+.section-title{font-size:1.05rem;font-weight:600;margin-bottom:6px}
+.section-desc{color:var(--muted);font-size:0.85rem;margin-bottom:24px}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;margin-bottom:24px}
+
+.form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:20px}
+.form-group{display:flex;flex-direction:column;gap:5px}
+.form-label{font-size:0.78rem;color:var(--muted);font-weight:500}
+.form-select{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.85rem;padding:8px 12px;min-width:200px}
+.form-select:focus{outline:none;border-color:var(--gold)}
+
+.primary-btn{padding:9px 20px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-size:0.85rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:opacity .15s}
+.primary-btn:disabled{opacity:.5;cursor:not-allowed}
+.primary-btn:not(:disabled):hover{opacity:.85}
+
+.download-btn{padding:9px 18px;border-radius:8px;border:none;background:var(--success);color:#04210f;font-size:0.85rem;font-weight:700;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;gap:7px;transition:opacity .15s}
+.download-btn:hover{opacity:.85}
+
+.progress-wrap{margin-top:8px}
+.progress-label{font-size:0.8rem;color:var(--gold);display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.progress-track{height:8px;border-radius:5px;background:var(--surface2);border:1px solid var(--border);overflow:hidden}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--blue),var(--gold));border-radius:5px;transition:width .4s ease}
+
+.job-status{font-size:0.78rem;border-radius:6px;padding:10px 12px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-top:8px;flex-wrap:wrap}
+.job-status.done{background:rgba(34,197,94,.08);color:var(--success);border:1px solid rgba(34,197,94,.2)}
+.job-status.error{background:rgba(239,68,68,.08);color:var(--error);border:1px solid rgba(239,68,68,.2)}
+.job-status-msg{display:flex;flex-direction:column;gap:2px}
+.job-status-meta{color:var(--muted);font-size:0.72rem}
+
+.spinner{width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0;margin-top:2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.info-list{font-size:0.82rem;color:var(--muted);margin-top:20px;line-height:1.8;padding-left:16px}
+
+.reports-list{display:flex;flex-direction:column;gap:8px}
+.report-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px}
+.report-name{font-size:0.82rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-meta{font-size:0.72rem;color:var(--muted);margin-top:2px}
+.report-dl{font-size:0.78rem;font-weight:600;color:var(--gold);text-decoration:none;flex-shrink:0;padding:5px 10px;border:1px solid rgba(255,194,0,.35);border-radius:6px}
+.report-dl:hover{background:rgba(255,194,0,.1)}
+.empty-note{color:var(--muted);font-size:0.82rem}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo-badge">KN</div>
+  <div>
+    <div class="logo-title">PDF Report <span>Generator</span></div>
+    <div class="logo-sub">Kotak Neo · YouTube Competitor Intelligence</div>
+  </div>
+</header>
+
+<main class="main">
+  <div class="section-title">Generate PDF Report</div>
+  <div class="section-desc">
+    Fetches live YouTube data for all competitor brands, builds a ~24-page
+    styled report, and renders it to PDF via headless Chrome. When it's
+    ready, download it below.
+  </div>
+
+  <div class="card">
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Month</label>
+        <select id="month" class="form-select"></select>
+      </div>
+      <button class="primary-btn" id="generate-btn" onclick="runGenerate()">Generate PDF Report</button>
+    </div>
+
+    <div id="status"></div>
+
+    <ul class="info-list" id="info-list">
+      <li>Cover + Findings + Executive Summary</li>
+      <li>Followers M-O-M comparison (all brands)</li>
+      <li>Key metrics table + engagement/views charts</li>
+      <li>Top 3 posts per brand with thumbnails</li>
+      <li>Download the finished PDF directly from this page</li>
+      <li>Takes ~3–6 minutes to complete</li>
+    </ul>
+  </div>
+
+  <div class="section-title">Previous Reports</div>
+  <div class="section-desc">Generated PDFs are kept on the server until you download them.</div>
+  <div class="card">
+    <div class="reports-list" id="reports-list">
+      <div class="empty-note">Loading…</div>
+    </div>
+  </div>
+</main>
+
+<script>
+const API = '';
+
+async function apiFetch(method, path, body) {
+  const res = await fetch(API + path, {
+    method,
+    headers: body ? {'Content-Type':'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({error: res.statusText}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+async function pollJob(jobId, onUpdate, ms=2000) {
+  return new Promise((resolve, reject) => {
+    const t = setInterval(async () => {
+      try {
+        const job = await apiFetch('GET', '/api/jobs/' + jobId);
+        onUpdate(job);
+        if (job.status === 'done' || job.status === 'error') {
+          clearInterval(t);
+          job.status === 'done' ? resolve(job) : reject(new Error(job.error || 'Job failed'));
+        }
+      } catch(e) { clearInterval(t); reject(e); }
+    }, ms);
+  });
+}
+
+function statusHtml(job) {
+  if (!job) return '';
+  const isRunning = job.status === 'pending' || job.status === 'running';
+  const isDone    = job.status === 'done';
+
+  if (isRunning) {
+    const p = job.progress || {label: 'Queued — waiting to start…', pct: 0};
+    return `
+      <div class="progress-wrap">
+        <div class="progress-label"><span class="spinner"></span><span>${p.label}</span></div>
+        <div class="progress-track"><div class="progress-fill" style="width:${p.pct}%"></div></div>
+      </div>`;
+  }
+  if (isDone) {
+    const r = job.result || {};
+    const sizeStr = r.size_kb ? `${(r.size_kb/1024).toFixed(1)} MB` : '';
+    return `<div class="job-status done">
+      <div class="job-status-msg">
+        <div>✓ PDF ready</div>
+        <div class="job-status-meta">${r.filename || ''} ${sizeStr ? '· ' + sizeStr : ''}</div>
+      </div>
+      <a class="download-btn" href="/api/reports/${encodeURIComponent(r.filename)}" download>⬇ Download PDF</a>
+    </div>`;
+  }
+  const lastLine = (job.error || 'Unknown error').split('\n').filter(Boolean).slice(-2).join(' › ');
+  return `<div class="job-status error"><div>✗ Error: ${lastLine}</div></div>`;
+}
+
+function monthOptions() {
+  const opts = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    opts.push(d.toLocaleString('en-US', {month:'long', year:'numeric'}));
+  }
+  return opts;
+}
+
+function populateMonths() {
+  const el = document.getElementById('month');
+  el.innerHTML = monthOptions().map(m => `<option value="${m}">${m}</option>`).join('');
+}
+
+async function runGenerate() {
+  const month = document.getElementById('month').value;
+  const btn = document.getElementById('generate-btn');
+  const statusEl = document.getElementById('status');
+
+  btn.disabled = true;
+  statusEl.innerHTML = statusHtml({status:'running', progress:{label:'Queued — waiting to start…', pct:0}});
+
+  try {
+    const { job_id } = await apiFetch('POST', '/api/pdf-report', {month});
+    await pollJob(job_id, j => { statusEl.innerHTML = statusHtml(j); });
+    loadReports();
+  } catch(e) {
+    statusEl.innerHTML = statusHtml({status:'error', error: e.message});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function fmtDate(mtimeSec) {
+  return new Date(mtimeSec * 1000).toLocaleString('en-US', {
+    month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
+  });
+}
+
+async function loadReports() {
+  const el = document.getElementById('reports-list');
+  try {
+    const { reports } = await apiFetch('GET', '/api/reports');
+    if (!reports.length) {
+      el.innerHTML = '<div class="empty-note">No reports generated yet.</div>';
+      return;
+    }
+    el.innerHTML = reports.map(r => `
+      <div class="report-row">
+        <div>
+          <div class="report-name">${r.filename}</div>
+          <div class="report-meta">${(r.size_kb/1024).toFixed(1)} MB · ${fmtDate(r.mtime)}</div>
+        </div>
+        <a class="report-dl" href="/api/reports/${encodeURIComponent(r.filename)}" download>⬇ Download</a>
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="empty-note">Could not load reports: ${e.message}</div>`;
+  }
+}
+
+populateMonths();
+loadReports();
+</script>
+</body>
+</html>

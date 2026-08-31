@@ -1,0 +1,2 @@
+# No third-party packages required — stdlib only.
+# Requires a local Chrome/Chromium install (used headlessly to render PDF slides).

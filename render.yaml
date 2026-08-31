@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: pdf-report-generator
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /
+    envVars:
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: PORT
+        value: "8001"
