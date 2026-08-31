@@ -2268,16 +2268,27 @@ def read_png(path):
         rows.append(rgb)
     return w, h, b''.join(rows)
 
-def write_pdf(slide_data, output_path, page_links=None):
+def _png_dims(path):
+    """Read just width/height from a PNG's IHDR chunk — no pixel decode, no big allocation."""
+    with open(path, 'rb') as f:
+        header = f.read(24)
+    return struct.unpack('>II', header[16:24])
+
+
+def write_pdf(png_paths, output_path, page_links=None):
     """
-    Write multi-page PDF. page_links: dict of slide_index -> list of
-    (url, x0_css, y0_css, x1_css, y1_css) in 1280x720 CSS pixels.
-    Converts to PDF pts and embeds URI link annotations.
+    Write multi-page PDF from a list of PNG file paths. Decodes and compresses
+    one slide's pixels at a time (~40-70MB at 4x scale) and streams straight to
+    disk, instead of holding every decoded slide in memory simultaneously —
+    keeps peak memory to roughly one slide's worth regardless of page count.
+    page_links: dict of slide_index -> list of (url, x0_css, y0_css, x1_css, y1_css)
+    in 1280x720 CSS pixels. Converts to PDF pts and embeds URI link annotations.
     """
     if page_links is None:
         page_links = {}
 
-    N2 = len(slide_data)
+    N2 = len(png_paths)
+    dims = [_png_dims(p) for p in png_paths]   # cheap — header only, no pixel decode
 
     # Pre-count how many annotation objects we need
     # Each link = 1 URI action obj + 1 annot obj
@@ -2293,84 +2304,93 @@ def write_pdf(slide_data, output_path, page_links=None):
     cat_id   = pages_id + 1
     total_obj = cat_id + 1
 
-    parts = []; xref = {}
-    def emit(d): parts.append(d.encode('latin-1') if isinstance(d, str) else bytes(d))
-    def cur(): return sum(len(p) for p in parts)
+    xref = {}
+    tmp_path = str(output_path) + ".tmp"
 
-    emit('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
+    with open(tmp_path, 'wb') as f:
+        def emit(d): f.write(d.encode('latin-1') if isinstance(d, str) else bytes(d))
+        def cur(): return f.tell()
 
-    # Build annotation obj IDs per slide up front
-    # slide_ann_ids[i] = list of (action_id, annot_id, url, rect_pts)
-    slide_ann_ids = {}
-    obj_cursor = ann_base
-    for i, (wp, hp, rgb) in enumerate(slide_data):
-        lnks = page_links.get(i, [])
-        if not lnks:
-            continue
-        # PDF coordinate system: origin bottom-left
-        # CSS: origin top-left, 1280x720
-        # PNG is rendered at 4x: 5120x2880, but PDF page = PNG_px * 0.75 pts
-        # The CSS→PDF mapping: x_pt = x_css * (wp/1280) * 0.75
-        #                       y_pt = (720 - y_css) * (hp/720) * 0.75  (flip Y)
-        scale_x = (wp / 1280) * 0.75
-        scale_y = (hp / 720)  * 0.75
-        ann_list = []
-        for (url, x0c, y0c, x1c, y1c) in lnks:
-            x0p = x0c * scale_x
-            x1p = x1c * scale_x
-            y0p = (720 - y1c) * scale_y   # PDF y0 = CSS bottom edge flipped
-            y1p = (720 - y0c) * scale_y   # PDF y1 = CSS top edge flipped
-            act_id  = obj_cursor;     obj_cursor += 1
-            ann_id  = obj_cursor;     obj_cursor += 1
-            ann_list.append((act_id, ann_id, url, x0p, y0p, x1p, y1p))
-        slide_ann_ids[i] = ann_list
+        emit('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
 
-    # Emit annotation objects first
-    for i in sorted(slide_ann_ids):
-        for (act_id, ann_id, url, x0p, y0p, x1p, y1p) in slide_ann_ids[i]:
-            safe_url = url.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
-            xref[act_id] = cur()
-            emit(f'{act_id} 0 obj\n<< /Type /Action /S /URI /URI ({safe_url}) >>\nendobj\n')
-            xref[ann_id] = cur()
-            emit(f'{ann_id} 0 obj\n'
-                 f'<< /Type /Annot /Subtype /Link '
-                 f'/Rect [{x0p:.2f} {y0p:.2f} {x1p:.2f} {y1p:.2f}] '
-                 f'/Border [0 0 0] '
-                 f'/A {act_id} 0 R >>\nendobj\n')
+        # Build annotation obj IDs per slide up front (needs only dims, not pixels)
+        # slide_ann_ids[i] = list of (action_id, annot_id, url, rect_pts)
+        slide_ann_ids = {}
+        obj_cursor = ann_base
+        for i, (wp, hp) in enumerate(dims):
+            lnks = page_links.get(i, [])
+            if not lnks:
+                continue
+            # PDF coordinate system: origin bottom-left
+            # CSS: origin top-left, 1280x720
+            # PNG is rendered at 4x: 5120x2880, but PDF page = PNG_px * 0.75 pts
+            # The CSS→PDF mapping: x_pt = x_css * (wp/1280) * 0.75
+            #                       y_pt = (720 - y_css) * (hp/720) * 0.75  (flip Y)
+            scale_x = (wp / 1280) * 0.75
+            scale_y = (hp / 720)  * 0.75
+            ann_list = []
+            for (url, x0c, y0c, x1c, y1c) in lnks:
+                x0p = x0c * scale_x
+                x1p = x1c * scale_x
+                y0p = (720 - y1c) * scale_y   # PDF y0 = CSS bottom edge flipped
+                y1p = (720 - y0c) * scale_y   # PDF y1 = CSS top edge flipped
+                act_id  = obj_cursor;     obj_cursor += 1
+                ann_id  = obj_cursor;     obj_cursor += 1
+                ann_list.append((act_id, ann_id, url, x0p, y0p, x1p, y1p))
+            slide_ann_ids[i] = ann_list
 
-    # Emit slide image/content/page objects
-    for i, (wp, hp, rgb) in enumerate(slide_data):
-        wpt = wp*0.75; hpt = hp*0.75
-        img_id = 3*i+1; cnt_id = 3*i+2; pag_id = 3*i+3
-        comp = zlib.compress(rgb, 6)
-        xref[img_id] = cur()
-        emit(f'{img_id} 0 obj\n<< /Type /XObject /Subtype /Image /Width {wp} /Height {hp} '
-             f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(comp)} >>\nstream\n')
-        emit(comp); emit('\nendstream\nendobj\n')
-        content = f'q {wpt:.4f} 0 0 {hpt:.4f} 0 0 cm /Im{img_id} Do Q'.encode()
-        xref[cnt_id] = cur()
-        emit(f'{cnt_id} 0 obj\n<< /Length {len(content)} >>\nstream\n')
-        emit(content); emit('\nendstream\nendobj\n')
-        xref[pag_id] = cur()
-        anns = slide_ann_ids.get(i, [])
-        annots_str = (' /Annots [' + ' '.join(f'{a[1]} 0 R' for a in anns) + ']') if anns else ''
-        emit(f'{pag_id} 0 obj\n<< /Type /Page /Parent {pages_id} 0 R '
-             f'/MediaBox [0 0 {wpt:.4f} {hpt:.4f}] /Contents {cnt_id} 0 R '
-             f'/Resources << /XObject << /Im{img_id} {img_id} 0 R >> >>{annots_str} >>\nendobj\n')
+        # Emit annotation objects first
+        for i in sorted(slide_ann_ids):
+            for (act_id, ann_id, url, x0p, y0p, x1p, y1p) in slide_ann_ids[i]:
+                safe_url = url.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                xref[act_id] = cur()
+                emit(f'{act_id} 0 obj\n<< /Type /Action /S /URI /URI ({safe_url}) >>\nendobj\n')
+                xref[ann_id] = cur()
+                emit(f'{ann_id} 0 obj\n'
+                     f'<< /Type /Annot /Subtype /Link '
+                     f'/Rect [{x0p:.2f} {y0p:.2f} {x1p:.2f} {y1p:.2f}] '
+                     f'/Border [0 0 0] '
+                     f'/A {act_id} 0 R >>\nendobj\n')
 
-    kids = ' '.join(f'{3*i+3} 0 R' for i in range(N2))
-    xref[pages_id] = cur()
-    emit(f'{pages_id} 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {N2} >>\nendobj\n')
-    xref[cat_id] = cur()
-    emit(f'{cat_id} 0 obj\n<< /Type /Catalog /Pages {pages_id} 0 R >>\nendobj\n')
+        # Emit slide image/content/page objects — one slide decoded+compressed+freed at a time
+        for i, png_path in enumerate(png_paths):
+            _progress("assemble", f"Assembling PDF page {i+1}/{N2}", 88 + int(10 * i / N2))
+            wp, hp, rgb = read_png(png_path)
+            wpt = wp*0.75; hpt = hp*0.75
+            img_id = 3*i+1; cnt_id = 3*i+2; pag_id = 3*i+3
+            comp = zlib.compress(rgb, 6)
+            rgb = None   # drop the raw pixel buffer now, before the next slide is decoded
+            xref[img_id] = cur()
+            emit(f'{img_id} 0 obj\n<< /Type /XObject /Subtype /Image /Width {wp} /Height {hp} '
+                 f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(comp)} >>\nstream\n')
+            emit(comp); emit('\nendstream\nendobj\n')
+            comp = None
+            content = f'q {wpt:.4f} 0 0 {hpt:.4f} 0 0 cm /Im{img_id} Do Q'.encode()
+            xref[cnt_id] = cur()
+            emit(f'{cnt_id} 0 obj\n<< /Length {len(content)} >>\nstream\n')
+            emit(content); emit('\nendstream\nendobj\n')
+            xref[pag_id] = cur()
+            anns = slide_ann_ids.get(i, [])
+            annots_str = (' /Annots [' + ' '.join(f'{a[1]} 0 R' for a in anns) + ']') if anns else ''
+            emit(f'{pag_id} 0 obj\n<< /Type /Page /Parent {pages_id} 0 R '
+                 f'/MediaBox [0 0 {wpt:.4f} {hpt:.4f}] /Contents {cnt_id} 0 R '
+                 f'/Resources << /XObject << /Im{img_id} {img_id} 0 R >> >>{annots_str} >>\nendobj\n')
+            print(f"  {png_path.name}: {wp}x{hp}")
 
-    xref_pos = cur()
-    emit(f'xref\n0 {total_obj}\n')
-    emit('0000000000 65535 f\r\n')
-    for oi in range(1, total_obj):
-        emit(f'{xref[oi]:010d} 00000 n\r\n')
-    emit(f'trailer\n<< /Size {total_obj} /Root {cat_id} 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n')
-    Path(output_path).write_bytes(b''.join(parts))
+        kids = ' '.join(f'{3*i+3} 0 R' for i in range(N2))
+        xref[pages_id] = cur()
+        emit(f'{pages_id} 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {N2} >>\nendobj\n')
+        xref[cat_id] = cur()
+        emit(f'{cat_id} 0 obj\n<< /Type /Catalog /Pages {pages_id} 0 R >>\nendobj\n')
+
+        xref_pos = cur()
+        emit(f'xref\n0 {total_obj}\n')
+        emit('0000000000 65535 f\r\n')
+        for oi in range(1, total_obj):
+            emit(f'{xref[oi]:010d} 00000 n\r\n')
+        emit(f'trailer\n<< /Size {total_obj} /Root {cat_id} 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n')
+
+    os.replace(tmp_path, output_path)   # atomic — a crash mid-write leaves only the .tmp file, never a corrupt PDF
     print(f"PDF saved: {output_path}  ({Path(output_path).stat().st_size//1024} KB)")
 
 
@@ -2458,20 +2478,14 @@ def build_pdf_report(month=None):
     if not pngs:
         print("ERROR: No slides rendered"); sys.exit(1)
 
-    # Step 4: parse PNGs and write PDF
+    # Step 4: write PDF — streams one slide's pixels through at a time (see write_pdf)
     print(f"\nStep 4: Building PDF from {len(pngs)} PNGs...")
     _progress("assemble", "Assembling PDF...", 88)
-    slide_data = []
-    for png in sorted(pngs):
-        w, h, rgb = read_png(png)
-        slide_data.append((w, h, rgb))
-        print(f"  {png.name}: {w}x{h}")
-
     out_dir_env = os.environ.get("PDF_REPORT_OUTPUT_DIR")
     out_dir = Path(out_dir_env) if out_dir_env else (Path.home() / "Downloads")
     out_dir.mkdir(parents=True, exist_ok=True)
     output = str(out_dir / f"Kotak_Neo_YouTube_Report_{month_label.replace(' ', '_')}_{run_ts}.pdf")
-    write_pdf(slide_data, output, page_links)
+    write_pdf(sorted(pngs), output, page_links)
 
     # Auto-delete the temp slides folder now that PDF is saved
     import shutil
