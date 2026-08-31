@@ -2201,6 +2201,7 @@ def screenshot_slides(html_slides, png_dir):
         html_abs = str(html_file).replace("\\", "/")
         png_abs  = str(png_file)   # keep backslashes for --screenshot flag on Windows
         url = f"file:///{html_abs}"
+        scale = os.environ.get("PDF_REPORT_SCALE", "4")
         cmd = [chrome,
                "--headless=new",
                "--disable-gpu",
@@ -2209,11 +2210,12 @@ def screenshot_slides(html_slides, png_dir):
                "--hide-scrollbars",
                "--disable-extensions",
                "--disable-background-networking",
-               "--force-device-scale-factor=4",   # 4x = ultra-HD quality
+               "--disable-dev-shm-usage",   # Docker's /dev/shm defaults to 64MB — Chrome needs more, this routes around it
+               f"--force-device-scale-factor={scale}",
                "--window-size=1280,720",
                f"--screenshot={png_abs}",
                url]
-        result = subprocess.run(cmd, capture_output=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, timeout=90)
         if png_file.exists() and png_file.stat().st_size > 1000:
             print(f"  Slide {i+1}/{len(html_slides)} -> {png_file.name} "
                   f"({png_file.stat().st_size//1024} KB)", flush=True)
