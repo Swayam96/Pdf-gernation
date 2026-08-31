@@ -2277,6 +2277,37 @@ def _png_dims(path):
     return struct.unpack('>II', header[16:24])
 
 
+def _read_png_idat_stream(path):
+    """
+    Fast path: Chrome's --screenshot PNGs are always 8-bit truecolor RGB,
+    non-interlaced. PNG's compressed IDAT bytes are already in exactly the
+    format PDF's /Predictor 15 (PNG prediction) expects — same per-row filter
+    bytes, same zlib stream — so they can be copied straight into the PDF
+    image stream with zero decompression, zero per-pixel unfiltering, and
+    zero recompression. Returns (w, h, idat_bytes) if the PNG matches that
+    shape, or (w, h, None) to signal the caller should fall back to the slow
+    decode-then-recompress path in read_png().
+    """
+    with open(path, 'rb') as f:
+        data = f.read()
+    pos = 8
+    w = h = bit_depth = color_type = interlace = 0
+    idat_parts = []
+    while pos < len(data) - 12:
+        length = struct.unpack('>I', data[pos:pos+4])[0]
+        chunk  = data[pos+4:pos+8]; cdata = data[pos+8:pos+8+length]; pos += 12 + length
+        if chunk == b'IHDR':
+            w, h = struct.unpack('>II', cdata[:8])
+            bit_depth, color_type, interlace = cdata[8], cdata[9], cdata[12]
+        elif chunk == b'IDAT':
+            idat_parts.append(cdata)
+        elif chunk == b'IEND':
+            break
+    if bit_depth == 8 and color_type == 2 and interlace == 0:
+        return w, h, b''.join(idat_parts)
+    return w, h, None
+
+
 def write_pdf(png_paths, output_path, page_links=None):
     """
     Write multi-page PDF from a list of PNG file paths. Decodes and compresses
@@ -2354,17 +2385,27 @@ def write_pdf(png_paths, output_path, page_links=None):
                      f'/Border [0 0 0] '
                      f'/A {act_id} 0 R >>\nendobj\n')
 
-        # Emit slide image/content/page objects — one slide decoded+compressed+freed at a time
+        # Emit slide image/content/page objects — one slide processed+freed at a time.
+        # Fast path: Chrome's PNGs are already PNG-filtered + zlib-compressed in the
+        # exact shape PDF's /Predictor 15 expects, so their IDAT bytes go straight into
+        # the image stream — no decompress/unfilter/recompress. Falls back to the slow
+        # decode-then-recompress path (read_png) for any PNG that doesn't match that shape.
         for i, png_path in enumerate(png_paths):
             _progress("assemble", f"Assembling PDF page {i+1}/{N2}", 88 + int(10 * i / N2))
-            wp, hp, rgb = read_png(png_path)
+            wp, hp, idat = _read_png_idat_stream(png_path)
             wpt = wp*0.75; hpt = hp*0.75
             img_id = 3*i+1; cnt_id = 3*i+2; pag_id = 3*i+3
-            comp = zlib.compress(rgb, 6)
-            rgb = None   # drop the raw pixel buffer now, before the next slide is decoded
+            if idat is not None:
+                comp = idat
+                decode_parms = f' /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns {wp} >>'
+            else:
+                _, _, rgb = read_png(png_path)
+                comp = zlib.compress(rgb, 6)
+                rgb = None   # drop the raw pixel buffer now, before the next slide is decoded
+                decode_parms = ''
             xref[img_id] = cur()
             emit(f'{img_id} 0 obj\n<< /Type /XObject /Subtype /Image /Width {wp} /Height {hp} '
-                 f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(comp)} >>\nstream\n')
+                 f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode{decode_parms} /Length {len(comp)} >>\nstream\n')
             emit(comp); emit('\nendstream\nendobj\n')
             comp = None
             content = f'q {wpt:.4f} 0 0 {hpt:.4f} 0 0 cm /Im{img_id} Do Q'.encode()
