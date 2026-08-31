@@ -89,6 +89,10 @@ a{color:var(--gold);word-break:break-all}
         <label class="form-label">Month</label>
         <select id="month" class="form-select"></select>
       </div>
+      <div class="form-group">
+        <label class="form-label">Year</label>
+        <select id="year" class="form-select" style="min-width:100px" onchange="populateMonths()"></select>
+      </div>
       <button class="primary-btn" id="generate-btn" onclick="runGenerate()">Generate PDF Report</button>
     </div>
 
@@ -170,26 +174,49 @@ function statusHtml(job) {
   return `<div class="job-status error"><div>✗ Error: ${lastLine}</div></div>`;
 }
 
-function monthOptions() {
-  const opts = [];
+const MONTH_NAMES = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+const YEARS = [2025, 2026];
+
+function isFutureMonth(monthIdx, year) {
   const now = new Date();
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    opts.push(d.toLocaleString('en-US', {month:'long', year:'numeric'}));
-  }
-  return opts;
+  const curYear = now.getFullYear(), curMonth = now.getMonth(); // 0-indexed
+  return year > curYear || (year === curYear && monthIdx > curMonth);
+}
+
+function populateYears() {
+  const el = document.getElementById('year');
+  const now = new Date();
+  el.innerHTML = YEARS.map(y => `<option value="${y}">${y}</option>`).join('');
+  el.value = String(now.getFullYear());
 }
 
 function populateMonths() {
   const el = document.getElementById('month');
-  el.innerHTML = monthOptions().map(m => `<option value="${m}">${m}</option>`).join('');
+  const year = parseInt(document.getElementById('year').value, 10);
+  const now = new Date();
+  el.innerHTML = MONTH_NAMES.map((name, idx) => {
+    const future = isFutureMonth(idx, year);
+    return `<option value="${name}" ${future ? 'disabled' : ''}>${name}${future ? ' (not available yet)' : ''}</option>`;
+  }).join('');
+  // default to current month if this year, else December
+  const defaultIdx = (year === now.getFullYear()) ? now.getMonth() : 11;
+  el.value = MONTH_NAMES[defaultIdx];
 }
 
 async function runGenerate() {
-  const month = document.getElementById('month').value;
+  const monthName = document.getElementById('month').value;
+  const year = parseInt(document.getElementById('year').value, 10);
+  const monthIdx = MONTH_NAMES.indexOf(monthName);
   const btn = document.getElementById('generate-btn');
   const statusEl = document.getElementById('status');
 
+  if (isFutureMonth(monthIdx, year)) {
+    statusEl.innerHTML = statusHtml({status:'error', error: `${monthName} ${year} data isn't available yet — it hasn't happened.`});
+    return;
+  }
+
+  const month = `${monthName} ${year}`;
   btn.disabled = true;
   statusEl.innerHTML = statusHtml({status:'running', progress:{label:'Queued — waiting to start…', pct:0}});
 
@@ -231,6 +258,7 @@ async function loadReports() {
   }
 }
 
+populateYears();
 populateMonths();
 loadReports();
 </script>

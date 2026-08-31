@@ -20,6 +20,7 @@ import sys
 import threading
 import traceback
 import uuid
+from datetime import datetime
 from urllib.parse import urlparse
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -236,8 +237,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/pdf-report":
-            if not body.get("month"):
+            month = body.get("month")
+            if not month:
                 self._send(400, {"error": "month is required"})
+                return
+            try:
+                requested = datetime.strptime(month, "%B %Y")
+            except ValueError:
+                self._send(400, {"error": "month must be in 'Month YYYY' format, e.g. 'September 2026'"})
+                return
+            now = datetime.now()
+            if (requested.year, requested.month) > (now.year, now.month):
+                self._send(400, {"error": f"{month} hasn't happened yet — data isn't available"})
                 return
             job_id = _start_job("pdf_report", body)
             self._send(202, {"job_id": job_id, "status": "pending"})
