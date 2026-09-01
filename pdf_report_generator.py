@@ -1318,9 +1318,7 @@ def slide_scorecard(s, page):
     eng_ldr  = r["by_engagement"][0]
     views_ldr= r["by_views"][0]
 
-    # Build 6 KPI cards: IG Engagement, IG Views, YT Views, YT Engagement, X Views, X Engagement
-    # IG data not available yet — show placeholder
-    # YT data is live
+    # Build 2 KPI cards: YT Views, YT Engagement
     yt_eng_rank  = k["engagement"]
     yt_view_rank = k["views"]
     yt_eng_val   = kotak["eng_fmt"]
@@ -1377,10 +1375,6 @@ def slide_scorecard(s, page):
         </div>"""
 
     cards_html = (
-        card("linear-gradient(135deg,#f09433,#dc2743,#bc1888)", "IG", "Instagram",
-             "Engagement", "—", "Kotak Neo", "—", "Instagram data — coming soon", "watch") +
-        card("linear-gradient(135deg,#f09433,#dc2743,#bc1888)", "IG", "Instagram",
-             "Views", "—", "Kotak Neo", "—", "Instagram data — coming soon", "watch") +
         card("#FF0000", "▶", "YouTube", "Views",
              yt_view_rank, "Kotak Neo", yt_view_val,
              f"{views_ldr} leads at {yt_view_ldr_val}",
@@ -1388,11 +1382,7 @@ def slide_scorecard(s, page):
         card("#FF0000", "▶", "YouTube", "Engagement",
              yt_eng_rank, "Kotak Neo", yt_eng_val,
              f"{eng_ldr} leads at {yt_eng_ldr_val}",
-             "leader" if yt_eng_rank == 1 else ("watch" if yt_eng_rank <= 3 else "improve")) +
-        card("#000", "X", "X (Twitter)", "Views",
-             "—", "Kotak Neo", "—", "Twitter data — coming soon", "watch") +
-        card("#000", "X", "X (Twitter)", "Engagement",
-             "—", "Kotak Neo", "—", "Twitter data — coming soon", "watch")
+             "leader" if yt_eng_rank == 1 else ("watch" if yt_eng_rank <= 3 else "improve"))
     )
 
     return f"""<!DOCTYPE html>
@@ -1419,8 +1409,7 @@ body{{background:#f7f9fc;}}
 .body{{padding:22px 48px 18px;display:flex;flex-direction:column;gap:12px;
        background:#f7f9fc;flex:1;}}
 .sec-label{{font-size:11px;font-weight:600;color:#7b8bad;letter-spacing:0.14em;text-transform:uppercase;}}
-.grid{{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);
-       gap:16px;flex:1;}}
+.grid{{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;flex:1;max-width:640px;margin:0 auto;}}
 .ftr{{height:40px;background:#fff;border-top:3px solid #E31837;
       display:flex;align-items:center;justify-content:space-between;padding:0 48px;}}
 .ftr span{{font-size:11px;color:#9aa5c0;font-weight:500;letter-spacing:0.08em;}}
@@ -1430,8 +1419,6 @@ body{{background:#f7f9fc;}}
 <div class="slide">
   <div class="hdr">
     <div class="hdr-left">
-      <div style="display:flex;align-items:center;">{LOGO_IMG}</div>
-      <div class="hdr-div"></div>
       <div><div class="hdr-label">Monthly Scorecard</div><div class="hdr-title">Platform Performance at a Glance</div></div>
     </div>
     <div style="text-align:right;">
@@ -1441,7 +1428,7 @@ body{{background:#f7f9fc;}}
   </div>
   <div class="acc"></div>
   <div class="body">
-    <div class="sec-label">Kotak Neo vs Industry — YouTube Live · Instagram &amp; Twitter Coming Soon</div>
+    <div class="sec-label">Kotak Neo vs Industry — YouTube</div>
     <div class="grid">{cards_html}</div>
   </div>
   <div class="ftr">
@@ -1741,7 +1728,7 @@ body{{background:#f7f9fc;}}
        justify-content:space-between;flex-shrink:0;color:#fff;}}
 .acc{{height:4px;background:linear-gradient(90deg,#E31837,#003087);flex-shrink:0;}}
 .body{{flex:1;padding:18px 32px 12px;display:flex;flex-direction:column;}}
-.grid3{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;flex:1;}}
+.grid3{{display:grid;grid-template-columns:1fr;gap:16px;flex:1;max-width:480px;margin:0 auto;}}
 .pcard{{background:#f8f9fc;border-radius:12px;padding:16px 18px;
         display:flex;flex-direction:column;gap:10px;border:1px solid #e8eaf0;}}
 .phead{{display:flex;align-items:center;gap:10px;margin-bottom:4px;}}
@@ -1758,9 +1745,6 @@ body{{background:#f7f9fc;}}
 <body>
 <div class="slide">
   <div class="hdr">
-    <div style="display:flex;align-items:center;gap:12px;">
-      <div style="display:flex;align-items:center;">{LOGO_IMG_SM}</div>
-    </div>
     <div style="font-size:20px;font-weight:600;">Engagement Rate Analysis</div>
     <div style="font-size:13px;opacity:0.7;">Content Observations · {month}</div>
   </div>
@@ -1771,21 +1755,6 @@ body{{background:#f7f9fc;}}
     <div style="font-size:12px;color:#666;margin-bottom:14px;">
       Normalizes for audience size · reveals true content quality independent of follower count</div>
     <div class="grid3">
-
-      <!-- Instagram -->
-      <div class="pcard">
-        <div class="phead">
-          <div class="picon" style="background:linear-gradient(135deg,#f09433,#dc2743,#bc1888);">IG</div>
-          <div><div class="pname">Instagram</div>
-               <div class="plbl">Engagement Rate · {month}</div></div>
-        </div>
-        <div style="padding:20px;text-align:center;background:#f0f2f5;border-radius:8px;flex:1;
-                    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;">
-          <div style="font-size:13px;font-weight:600;color:#888;">Instagram data</div>
-          <div style="font-size:11px;color:#aaa;">Scraper integration coming soon</div>
-          <div style="font-size:10px;color:#bbb;">Will show ER per brand once<br>Apify Instagram MCP is connected</div>
-        </div>
-      </div>
 
       <!-- YouTube -->
       <div class="pcard">
@@ -1799,21 +1768,6 @@ body{{background:#f7f9fc;}}
              border-left:3px solid {'#003087' if kotak_yt_rank <= 3 else '#f59e0b'};">
           Kotak Neo ranks <strong>#{kotak_yt_rank}</strong> on YouTube ER.
           {yt_leader} leads at {yt_er[yt_leader]:.2f}%.
-        </div>
-      </div>
-
-      <!-- Twitter -->
-      <div class="pcard">
-        <div class="phead">
-          <div class="picon" style="background:#000;">X</div>
-          <div><div class="pname">X (Twitter)</div>
-               <div class="plbl">Engagement Rate · {month}</div></div>
-        </div>
-        <div style="padding:20px;text-align:center;background:#f0f2f5;border-radius:8px;flex:1;
-                    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;">
-          <div style="font-size:13px;font-weight:600;color:#888;">Twitter data</div>
-          <div style="font-size:11px;color:#aaa;">Scraper integration coming soon</div>
-          <div style="font-size:10px;color:#bbb;">Will show ER per brand once<br>Twitter MCP is connected</div>
         </div>
       </div>
 
@@ -1936,9 +1890,6 @@ body{{background:#f7f9fc;}}
 <body>
 <div class="slide">
   <div class="hdr">
-    <div style="display:flex;align-items:center;gap:12px;">
-      <div style="display:flex;align-items:center;">{LOGO_IMG_SM}</div>
-    </div>
     <div style="font-size:20px;font-weight:600;">Competitor Spotlight</div>
     <div style="font-size:13px;opacity:0.7;">Content Observations · {month}</div>
   </div>
@@ -2103,9 +2054,6 @@ thead th:first-child{{text-align:left;width:220px;}}
 <body>
 <div class="slide">
   <div class="hdr">
-    <div style="display:flex;align-items:center;gap:12px;">
-      <div style="display:flex;align-items:center;">{LOGO_IMG_SM}</div>
-    </div>
     <div style="font-size:20px;font-weight:600;">Thematic Performance Heatmap</div>
     <div style="font-size:13px;opacity:0.7;">Content Observations · {month}</div>
   </div>
@@ -2502,12 +2450,11 @@ def build_pdf_report(month=None):
 
     slides.append(slide_growth(summary, p));               p+=1  # 17
     slides.append(slide_methodology(summary, p));          p+=1  # 18
-    slides.append(slide_scorecard(summary, p));            p+=1  # 19
-    slides.append(slide_follower_trend(summary, p));       p+=1  # 20
-    slides.append(slide_engagement_rate(summary, p));      p+=1  # 21
-    slides.append(slide_competitor_spotlight(summary, p)); p+=1  # 22
-    slides.append(slide_thematic_heatmap(summary, p));     p+=1  # 23
-    slides.append(slide_thank_you(p))                            # 24
+    slides.append(slide_follower_trend(summary, p));       p+=1  # 19
+    slides.append(slide_engagement_rate(summary, p));      p+=1  # 20
+    slides.append(slide_competitor_spotlight(summary, p)); p+=1  # 21
+    slides.append(slide_thematic_heatmap(summary, p));     p+=1  # 22
+    slides.append(slide_thank_you(p))                            # 23
 
     print(f"  {len(slides)} slides built")
 
