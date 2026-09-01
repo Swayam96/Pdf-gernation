@@ -75,12 +75,15 @@ C = {
 }
 
 # ── Common CSS injected into every slide ─────────────────────────────
+# No @import of Google Fonts here on purpose — each slide is rendered by a fresh
+# headless Chrome process, so a network font fetch on every launch adds memory/
+# latency overhead that OOMs on memory-constrained hosts (e.g. Render free tier).
+# Falls back to the system sans-serif stack instead.
 COMMON_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@700;800;900&display=swap');
 *{margin:0;padding:0;box-sizing:border-box;}
 body{width:1280px;height:720px;overflow:hidden;
-     font-family:'Inter','Segoe UI',system-ui,Arial,sans-serif;background:#fff;}
+     font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#fff;}
 .slide{width:1280px;height:720px;position:relative;overflow:hidden;}
 .accent-bar{position:absolute;left:0;top:0;width:5px;height:100%;background:#DC143C;}
 .footer{position:absolute;bottom:0;left:0;width:1280px;}
@@ -359,7 +362,7 @@ body{{background:#003570;}}
               padding:50px 48px;border-left:2px solid rgba(255,255,255,0.07);}}
 .eyebrow{{font-size:10px;font-weight:700;color:#FFC200;letter-spacing:3px;
           text-transform:uppercase;margin-bottom:18px;}}
-.big-title{{font-family:'Outfit',Arial,sans-serif;font-size:58px;font-weight:900;
+.big-title{{font-family:'Outfit','Segoe UI Black',Arial,sans-serif;font-size:58px;font-weight:900;
             color:#ffffff;line-height:1.05;letter-spacing:-1px;}}
 .big-title span{{color:#DC143C;}}
 .red-rule{{width:60px;height:4px;background:#DC143C;border-radius:2px;margin:22px 0;}}
@@ -1071,7 +1074,7 @@ def slide_top3_posts(s, brand, page):
 .accent-bar{{position:absolute;left:0;top:0;width:5px;height:100%;background:#DC143C;}}
 .main{{padding:20px 28px 46px 34px;display:flex;flex-direction:column;height:720px;}}
 .slide-title{{font-size:26px;font-weight:800;color:#004B91;
-              font-family:'Outfit',Arial,sans-serif;}}
+              font-family:'Outfit','Segoe UI Black',Arial,sans-serif;}}
 .hline{{height:2px;width:100%;margin:8px 0 14px;
         background:linear-gradient(90deg,#004B91 0%,#DC143C 22%,rgba(0,75,145,0.2) 60%,transparent 100%);}}
 .cards{{display:flex;gap:18px;flex:1;align-items:flex-start;}}
@@ -1250,7 +1253,7 @@ body{{background:#003570;}}
               background:#002d62;
               display:flex;flex-direction:column;justify-content:center;
               align-items:center;padding:40px;}}
-.ty-text{{font-family:'Outfit',Arial,sans-serif;font-size:72px;font-weight:900;
+.ty-text{{font-family:'Outfit','Segoe UI Black',Arial,sans-serif;font-size:72px;font-weight:900;
           color:#fff;line-height:1;letter-spacing:-2px;}}
 .ty-sub{{font-size:16px;color:rgba(255,255,255,0.6);margin-top:16px;letter-spacing:0.5px;}}
 .red-rule{{width:60px;height:4px;background:#DC143C;border-radius:2px;margin:20px 0;}}
@@ -2158,6 +2161,10 @@ def screenshot_slides(html_slides, png_dir):
                "--disable-extensions",
                "--disable-background-networking",
                "--disable-dev-shm-usage",   # Docker's /dev/shm defaults to 64MB — Chrome needs more, this routes around it
+               "--disable-background-timer-throttling",
+               "--disable-renderer-backgrounding",
+               "--disk-cache-size=1",       # no on-disk cache — one-shot render, not worth the memory/IO
+               "--single-process",          # skip the separate renderer process — halves the memory footprint per launch
                f"--force-device-scale-factor={scale}",
                "--window-size=1280,720",
                f"--screenshot={png_abs}",
