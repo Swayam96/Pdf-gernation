@@ -15,6 +15,7 @@ Setup:
 import os, sys, json, ssl, urllib.request, urllib.parse, math
 from datetime import datetime
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Config ────────────────────────────────────────────────────────────
 YOUTUBE_API_KEY  = os.environ.get("YOUTUBE_API_KEY", "")
@@ -158,11 +159,26 @@ def pct_color(val_str):
     return "#333"
 
 # ── YouTube data ──────────────────────────────────────────────────────
-def yt_api(endpoint, params):
+def yt_api(endpoint, params, retries=3):
+    # Retries transient network/SSL hiccups (timeouts, connection resets) — with
+    # 8 brands fetched concurrently, a single flaky connection is more likely to
+    # occur than with the old one-at-a-time fetch, so one bad handshake shouldn't
+    # fail an otherwise-successful report. Does not retry on real API errors
+    # (bad request, quota exceeded, etc.) — those raise immediately, unchanged.
     params["key"] = YOUTUBE_API_KEY
     url = f"{YOUTUBE_API_BASE}/{endpoint}?{urllib.parse.urlencode(params)}"
-    with urllib.request.urlopen(url, context=_SSL, timeout=15) as r:
-        return json.loads(r.read().decode())
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(url, context=_SSL, timeout=15) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError:
+            raise  # real API error (bad request, quota exceeded, etc.) — don't retry
+        except (urllib.error.URLError, TimeoutError) as e:
+            last_exc = e
+            if attempt < retries - 1:
+                import time; time.sleep(1.5 * (attempt + 1))
+    raise last_exc
 
 def get_channel_stats(cid):
     data = yt_api("channels", {"part": "statistics", "id": cid})
@@ -171,46 +187,116 @@ def get_channel_stats(cid):
     return {"subscribers": int(st.get("subscriberCount", 0)),
             "views":       int(st.get("viewCount", 0))}
 
-def get_recent_videos(cid, count=15):
+# Safety backstop on how many uploads back we'll page through a channel's history
+# to find videos published in the requested month — NOT a tight per-month budget.
+# Measured against real channel data: the fastest-posting competitor here needs
+# ~750 videos scanned to reach back to January 2026 (the oldest month the dashboard
+# offers). Set with a comfortable margin above that so it reliably reaches any
+# offered month without ever silently under-reporting "0 posts" due to running
+# out of budget. playlistItems.list costs 1 quota unit/page regardless of
+# maxResults, so this has negligible quota impact even at the cap.
+MONTH_SEARCH_CAP = 1500
+_PAGE_SIZE = 50  # YouTube API max per playlistItems page
+
+def get_videos_for_month(cid, year, month):
+    """
+    Page backwards through a channel's uploads playlist (newest first) collecting
+    every video actually published in the given (year, month), stopping once we've
+    paged past that month (uploads are strictly newest-first, so once we see a video
+    older than the target month, nothing further back can be in it) or hit
+    MONTH_SEARCH_CAP videos scanned.
+    """
     playlist_id = "UU" + cid[2:]
-    data = yt_api("playlistItems", {"part": "contentDetails", "playlistId": playlist_id, "maxResults": count})
-    if not data.get("items"): return []
-    ids  = [i["contentDetails"]["videoId"] for i in data["items"]]
-    pub  = {i["contentDetails"]["videoId"]: i["contentDetails"].get("videoPublishedAt","")[:10] for i in data["items"]}
-    vdata = yt_api("videos", {"part": "snippet,statistics", "id": ",".join(ids)})
+    matched_ids, matched_pub = [], {}
+    page_token = None
+    scanned = 0
+
+    while scanned < MONTH_SEARCH_CAP:
+        params = {"part": "contentDetails", "playlistId": playlist_id,
+                  "maxResults": min(_PAGE_SIZE, MONTH_SEARCH_CAP - scanned)}
+        if page_token:
+            params["pageToken"] = page_token
+        data = yt_api("playlistItems", params)
+        items = data.get("items", [])
+        if not items:
+            break
+
+        stop = False
+        for it in items:
+            scanned += 1
+            pub_date = it["contentDetails"].get("videoPublishedAt", "")[:10]
+            if not pub_date:
+                continue
+            pub_year, pub_month = int(pub_date[:4]), int(pub_date[5:7])
+            if (pub_year, pub_month) == (year, month):
+                vid_id = it["contentDetails"]["videoId"]
+                matched_ids.append(vid_id)
+                matched_pub[vid_id] = pub_date
+            elif (pub_year, pub_month) < (year, month):
+                # Uploads are newest-first — once we're past the target month, stop.
+                stop = True
+                break
+        if stop:
+            break
+
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not matched_ids:
+        return []
+
+    # /videos accepts at most 50 IDs per call
     result = []
-    for item in vdata.get("items", []):
-        st = item["statistics"]
-        vid_id = item["id"]
-        result.append({
-            "id": vid_id, "title": item["snippet"]["title"],
-            "published": pub.get(vid_id, item["snippet"]["publishedAt"][:10]),
-            "views":    int(st.get("viewCount",   0)),
-            "likes":    int(st.get("likeCount",   0)),
-            "comments": int(st.get("commentCount",0)),
-            "thumbnail": f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg",
-            "url":       f"https://www.youtube.com/watch?v={vid_id}",
-        })
+    for batch_start in range(0, len(matched_ids), 50):
+        batch = matched_ids[batch_start:batch_start + 50]
+        vdata = yt_api("videos", {"part": "snippet,statistics", "id": ",".join(batch)})
+        for item in vdata.get("items", []):
+            st = item["statistics"]
+            vid_id = item["id"]
+            result.append({
+                "id": vid_id, "title": item["snippet"]["title"],
+                "published": matched_pub.get(vid_id, item["snippet"]["publishedAt"][:10]),
+                "views":    int(st.get("viewCount",   0)),
+                "likes":    int(st.get("likeCount",   0)),
+                "comments": int(st.get("commentCount",0)),
+                "thumbnail": f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg",
+                "url":       f"https://www.youtube.com/watch?v={vid_id}",
+            })
     return result
 
-def fetch_all_youtube_data():
+def _fetch_one_brand(brand, cid, year, month):
+    st   = get_channel_stats(cid)
+    vids = get_videos_for_month(cid, year, month)
+    eng  = sum(v["likes"] + v["comments"] for v in vids)
+    views = sum(v["views"] for v in vids)
+    return brand, {
+        "subscribers":   st.get("subscribers", 0),
+        "channel_views": st.get("views", 0),
+        "recent_views":  views,
+        "engagement":    eng,
+        "posts":         len(vids),
+    }, vids
+
+def fetch_all_youtube_data(year, month):
+    # The 8 brands are fully independent lookups — fetched concurrently since each
+    # is dominated by network latency (and, for older months, paginating deep into
+    # a channel's upload history), not CPU. Cuts an older-month fetch from
+    # "8 brands x deep pagination, one after another" to "roughly 1x, in parallel."
     stats, videos = {}, {}
     total = len(COMPETITOR_CHANNELS)
-    for i, (brand, cid) in enumerate(COMPETITOR_CHANNELS.items()):
-        print(f"  {brand}...", flush=True)
-        _progress("fetch", f"Fetching {brand} data ({i+1}/{total})", 5 + int(25 * i / total))
-        st   = get_channel_stats(cid)
-        vids = get_recent_videos(cid, 15)
-        eng  = sum(v["likes"] + v["comments"] for v in vids)
-        views = sum(v["views"] for v in vids)
-        stats[brand] = {
-            "subscribers":   st.get("subscribers", 0),
-            "channel_views": st.get("views", 0),
-            "recent_views":  views,
-            "engagement":    eng,
-            "posts":         len(vids),
-        }
-        videos[brand] = vids
+    done = 0
+    with ThreadPoolExecutor(max_workers=total) as pool:
+        futures = {pool.submit(_fetch_one_brand, brand, cid, year, month): brand
+                   for brand, cid in COMPETITOR_CHANNELS.items()}
+        for future in as_completed(futures):
+            brand = futures[future]
+            _, brand_stats, vids = future.result()
+            stats[brand] = brand_stats
+            videos[brand] = vids
+            done += 1
+            print(f"  {brand}... done ({done}/{total})", flush=True)
+            _progress("fetch", f"Fetching YouTube data ({done}/{total} brands)", 5 + int(25 * done / total))
     return stats, videos
 
 def build_summary(stats, videos, month_label):
@@ -2399,21 +2485,23 @@ def build_pdf_report(month=None):
 
     if month:
         month_label = month
+        target = datetime.strptime(month, "%B %Y")
     else:
         now = datetime.now()
         m = now.month-1 if now.month > 1 else 12
         y = now.year if now.month > 1 else now.year-1
-        month_label = datetime(y, m, 1).strftime("%B %Y")
+        target = datetime(y, m, 1)
+        month_label = target.strftime("%B %Y")
 
     print(f"\n{'='*60}")
     print(f"  YouTube PDF Report v2 — {month_label}")
     print(f"  Engine: Python + Chrome headless")
     print(f"{'='*60}\n")
 
-    # Step 1: fetch data
-    print("Step 1: Fetching YouTube data...")
-    _progress("fetch", "Fetching YouTube data...", 2)
-    stats, videos = fetch_all_youtube_data()
+    # Step 1: fetch data — only videos actually published in the target month
+    print(f"Step 1: Fetching YouTube data for {month_label}...")
+    _progress("fetch", f"Fetching YouTube data for {month_label}...", 2)
+    stats, videos = fetch_all_youtube_data(target.year, target.month)
     summary = build_summary(stats, videos, month_label)
 
     # Step 2: build all slides in Python (no API calls for data slides)
