@@ -1188,7 +1188,6 @@ def slide_methodology(s, page):
         "YouTube data fetched live via YouTube Data API v3 using uploads playlist enumeration (1 quota unit/page).",
         "Subscriber counts: current value from API for latest month; historical data (Oct-24 to Jun-26) from tracked records.",
         "Views and Engagement aggregated from recent videos (up to 15 per channel) fetched each run.",
-        "Engagement = Likes + Comments. YouTube removed public share counts from API in 2015.",
         "For high-volume channels, up to 15 videos per channel fetched to ensure reasonable coverage.",
         "Follower growth % = ((Current - Previous) / Previous) x 100. Green = positive, Red = decline.",
         "Video thumbnails embedded directly from YouTube CDN (img.youtube.com/vi/{id}/mqdefault.jpg).",
