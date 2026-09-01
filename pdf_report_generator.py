@@ -2164,7 +2164,6 @@ def screenshot_slides(html_slides, png_dir):
                "--disable-background-timer-throttling",
                "--disable-renderer-backgrounding",
                "--disk-cache-size=1",       # no on-disk cache — one-shot render, not worth the memory/IO
-               "--single-process",          # skip the separate renderer process — halves the memory footprint per launch
                f"--force-device-scale-factor={scale}",
                "--window-size=1280,720",
                f"--screenshot={png_abs}",
