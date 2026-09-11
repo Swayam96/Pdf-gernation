@@ -347,6 +347,10 @@ input[type="date"].form-select::-webkit-calendar-picker-indicator{filter:invert(
           <label class="form-label">Month</label>
           <select id="md-month" class="form-select"></select>
         </div>
+        <div class="form-group">
+          <label class="form-label">Year</label>
+          <select id="md-year" class="form-select" style="min-width:100px" onchange="populateMonths('md-month', 'md-year')"></select>
+        </div>
         <button class="primary-btn" id="md-single-btn" onclick="runMasterDataSingle()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           Create Master Data
@@ -361,6 +365,10 @@ input[type="date"].form-select::-webkit-calendar-picker-indicator{filter:invert(
         <div class="form-group">
           <label class="form-label">Month</label>
           <select id="md-all-month" class="form-select"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Year</label>
+          <select id="md-all-year" class="form-select" style="min-width:100px" onchange="populateMonths('md-all-month', 'md-all-year')"></select>
         </div>
         <button class="primary-btn" id="md-all-btn" onclick="runMasterDataAll()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
@@ -561,19 +569,19 @@ function isFutureMonth(monthIdx, year) {
   return year > curYear || (year === curYear && monthIdx > curMonth);
 }
 
-function populateYears() {
-  const el = document.getElementById('year');
+function populateYears(yearId = 'year', yearsBack = 1) {
+  const el = document.getElementById(yearId);
   const now = new Date();
-  const startYear = now.getFullYear() - 1;
+  const startYear = now.getFullYear() - yearsBack;
   const years = [];
-  for (let y = startYear; y <= now.getFullYear(); y++) years.push(y);
+  for (let y = now.getFullYear(); y >= startYear; y--) years.push(y);
   el.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
   el.value = String(now.getFullYear());
 }
 
-function populateMonths() {
-  const el = document.getElementById('month');
-  const year = parseInt(document.getElementById('year').value, 10);
+function populateMonths(monthId = 'month', yearId = 'year') {
+  const el = document.getElementById(monthId);
+  const year = parseInt(document.getElementById(yearId).value, 10);
   const now = new Date();
   el.innerHTML = MONTH_NAMES.map((name, idx) => {
     const future = isFutureMonth(idx, year);
@@ -710,9 +718,10 @@ function mdOpts() {
 }
 
 async function initMasterDataTab() {
-  const months = monthOptions();
-  populateSelect('md-month', months, months[0]);
-  populateSelect('md-all-month', months, months[0]);
+  populateYears('md-year', 5);
+  populateMonths('md-month', 'md-year');
+  populateYears('md-all-year', 5);
+  populateMonths('md-all-month', 'md-all-year');
 
   try {
     const { brands } = await apiFetch('GET', '/api/brands');
@@ -724,9 +733,16 @@ async function initMasterDataTab() {
 
 async function runMasterDataSingle() {
   const brand = document.getElementById('md-brand').value;
-  const month = document.getElementById('md-month').value;
+  const monthName = document.getElementById('md-month').value;
+  const year = document.getElementById('md-year').value;
+  const month = `${monthName} ${year}`;
   const btn = document.getElementById('md-single-btn');
   const statusEl = document.getElementById('md-single-status');
+
+  if (isFutureMonth(MONTH_NAMES.indexOf(monthName), parseInt(year, 10))) {
+    statusEl.innerHTML = statusHtml({status:'error', error: `${month} hasn't happened yet — data isn't available.`});
+    return;
+  }
 
   btn.disabled = true;
   statusEl.innerHTML = statusHtml({status:'running', progress:{label:'Queued — waiting to start…', pct:0}});
@@ -743,10 +759,17 @@ async function runMasterDataSingle() {
 }
 
 async function runMasterDataAll() {
-  const month = document.getElementById('md-all-month').value;
+  const monthName = document.getElementById('md-all-month').value;
+  const year = document.getElementById('md-all-year').value;
+  const month = `${monthName} ${year}`;
   const btn = document.getElementById('md-all-btn');
   const statusEl = document.getElementById('md-all-status');
   const resultsEl = document.getElementById('md-all-results');
+
+  if (isFutureMonth(MONTH_NAMES.indexOf(monthName), parseInt(year, 10))) {
+    statusEl.innerHTML = statusHtml({status:'error', error: `${month} hasn't happened yet — data isn't available.`});
+    return;
+  }
 
   btn.disabled = true;
   statusEl.innerHTML = statusHtml({status:'running', progress:{label:'Queued — waiting to start…', pct:0}});
