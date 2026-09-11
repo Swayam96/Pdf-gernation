@@ -3,5 +3,11 @@ __pycache__/
 *.pyc
 pdf_slides_*/
 generated_reports/
+generated_master_data/
+generated_exports/
+master_data/
 *.pdf
-server.log
+*.xlsx
+*.log
+subscriber_history.json
+test_subscriber_history.json

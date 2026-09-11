@@ -3,121 +3,407 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0f1117">
 <title>PDF Report Generator — Kotak Neo</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23004B91'/%3E%3Ctext x='50' y='68' font-size='48' font-weight='800' text-anchor='middle' fill='%23FFC200' font-family='Arial'%3EKN%3C/text%3E%3C/svg%3E">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --blue:#004B91;--red:#DC143C;--gold:#FFC200;
-  --bg:#0f1117;--surface:#1a1d27;--surface2:#222536;
-  --border:#2e3148;--text:#e8eaf6;--muted:#8b90b8;
-  --success:#22c55e;--error:#ef4444;--radius:12px;
+  --blue:#004B91;--blue-lt:#0064c4;--red:#DC143C;--gold:#FFC200;
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#222536;--surface3:#2a2e42;
+  --border:#2e3148;--border-hover:#3d4167;--text:#e8eaf6;--muted:#8b90b8;
+  --success:#22c55e;--error:#ef4444;--radius:14px;--radius-sm:9px;
 }
-html,body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:15px;line-height:1.6;min-height:100vh}
+html,body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:15px;line-height:1.6;min-height:100vh}
+body{position:relative;overflow-x:hidden}
+body::before{content:"";position:fixed;top:-220px;right:-220px;width:600px;height:600px;background:radial-gradient(circle,rgba(0,75,145,.16),transparent 70%);pointer-events:none;z-index:0}
+body::after{content:"";position:fixed;bottom:-220px;left:-220px;width:520px;height:520px;background:radial-gradient(circle,rgba(255,194,0,.07),transparent 70%);pointer-events:none;z-index:0}
 a{color:var(--gold);word-break:break-all}
+svg{display:block}
 
-.header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 32px;display:flex;align-items:center;gap:14px;height:64px}
-.logo-badge{width:38px;height:38px;border-radius:8px;background:var(--blue);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.85rem;flex-shrink:0}
-.logo-title{font-size:1.1rem;font-weight:700;letter-spacing:-0.3px}
+/* ── header ─────────────────────────────────────────────────────────── */
+.header{position:relative;z-index:1;background:var(--surface);border-bottom:1px solid var(--border);padding:0 32px;display:flex;align-items:center;justify-content:space-between;gap:14px;height:68px}
+.header-left{display:flex;align-items:center;gap:14px}
+.logo-badge{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--blue),var(--blue-lt));color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.88rem;flex-shrink:0;box-shadow:0 3px 10px rgba(0,75,145,.35)}
+.logo-title{font-size:1.12rem;font-weight:700;letter-spacing:-0.3px}
 .logo-title span{color:var(--gold)}
 .logo-sub{font-size:0.78rem;color:var(--muted)}
+.status-pill{display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:20px;background:var(--surface2);border:1px solid var(--border);font-size:0.78rem;color:var(--muted);white-space:nowrap}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);transition:background .2s,box-shadow .2s}
+.status-dot.online{background:var(--success);box-shadow:0 0 8px rgba(34,197,94,.65)}
+.status-dot.offline{background:var(--error);box-shadow:0 0 8px rgba(239,68,68,.65)}
 
-.main{padding:32px;max-width:680px;margin:0 auto}
-.section-title{font-size:1.05rem;font-weight:600;margin-bottom:6px}
-.section-desc{color:var(--muted);font-size:0.85rem;margin-bottom:24px}
+/* ── tabs ───────────────────────────────────────────────────────────── */
+.tabs{position:relative;z-index:1;padding:16px 32px;display:flex}
+.tabs-inner{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:5px;gap:2px;max-width:100%;overflow-x:auto}
+.tab-btn{display:flex;align-items:center;gap:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.85rem;font-weight:600;padding:10px 18px;border-radius:10px;white-space:nowrap;transition:color .15s,background .15s,box-shadow .15s}
+.tab-btn svg{width:16px;height:16px;flex-shrink:0}
+.tab-btn:not(.active):hover{color:var(--text);background:rgba(255,255,255,.05)}
+.tab-btn.active{color:#fff;background:linear-gradient(135deg,var(--blue),var(--blue-lt));box-shadow:0 3px 12px rgba(0,75,145,.4)}
+.tab-badge{font-size:0.68rem;font-weight:700;background:rgba(255,255,255,.15);padding:1px 7px;border-radius:9px}
+.tab-badge:empty{display:none}
 
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;margin-bottom:24px}
+.tab-pane{display:none}
+.tab-pane.active{display:block;animation:paneIn .25s ease}
+@keyframes paneIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 
-.form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:20px}
-.form-group{display:flex;flex-direction:column;gap:5px}
-.form-label{font-size:0.78rem;color:var(--muted);font-weight:500}
-.form-select{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.85rem;padding:8px 12px;min-width:200px}
-.form-select:focus{outline:none;border-color:var(--gold)}
+/* ── layout ─────────────────────────────────────────────────────────── */
+.main{position:relative;z-index:1;padding:8px 32px 32px;max-width:860px;margin:0 auto;animation:fadeIn .4s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
-.primary-btn{padding:9px 20px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-size:0.85rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:opacity .15s}
-.primary-btn:disabled{opacity:.5;cursor:not-allowed}
-.primary-btn:not(:disabled):hover{opacity:.85}
+.hero{display:flex;gap:16px;align-items:flex-start;margin-bottom:22px}
+.hero-icon{width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hero-icon svg{width:23px;height:23px}
+.hero-icon.blue{background:rgba(0,75,145,.16);color:#5aa9e6}
+.hero-icon.gold{background:rgba(255,194,0,.14);color:var(--gold)}
+.hero-icon.red{background:rgba(220,20,60,.14);color:#ff6b85}
+.section-title{font-size:1.12rem;font-weight:700;margin-bottom:4px;letter-spacing:-0.2px}
+.section-desc{color:var(--muted);font-size:0.86rem}
+.sub-heading{font-size:0.76rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:22px 0 12px;display:flex;align-items:center;gap:10px}
+.sub-heading:first-of-type{margin-top:0}
 
-.download-btn{padding:9px 18px;border-radius:8px;border:none;background:var(--success);color:#04210f;font-size:0.85rem;font-weight:700;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;gap:7px;transition:opacity .15s}
-.download-btn:hover{opacity:.85}
+.card{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:26px;margin-bottom:22px;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:3px}
+.card.accent-blue::before{background:linear-gradient(90deg,var(--blue),var(--blue-lt))}
+.card.accent-gold::before{background:linear-gradient(90deg,var(--gold),#ffdd66)}
+.card.accent-red::before{background:linear-gradient(90deg,var(--red),#ff6b85)}
 
-.progress-wrap{margin-top:8px}
-.progress-label{font-size:0.8rem;color:var(--gold);display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:12px;flex-wrap:wrap}
+.list-header-title{display:flex;align-items:center;gap:10px}
+.count-badge{font-size:0.72rem;font-weight:600;background:var(--surface2);color:var(--muted);padding:3px 10px;border-radius:20px;border:1px solid var(--border)}
+.count-badge:empty{display:none}
+.refresh-btn{display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:0.78rem;font-weight:500;padding:6px 12px;border-radius:8px;transition:all .15s}
+.refresh-btn:hover{color:var(--text);border-color:var(--border-hover);background:var(--surface2)}
+.refresh-btn svg{width:13px;height:13px}
+.refresh-btn.spinning svg{animation:spin .6s linear}
+
+/* ── forms ──────────────────────────────────────────────────────────── */
+.form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-label{font-size:0.76rem;color:var(--muted);font-weight:600;letter-spacing:.01em}
+.form-select{appearance:none;-webkit-appearance:none;background:var(--surface2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%238b90b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") no-repeat right 12px center;background-size:14px;border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:0.85rem;padding:10px 34px 10px 14px;min-width:200px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.form-select:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(255,194,0,.14)}
+input[type="date"].form-select{font-family:inherit;color-scheme:dark;background-image:none;padding-right:14px}
+input[type="date"].form-select::-webkit-calendar-picker-indicator{filter:invert(0.8) sepia(1) saturate(4) hue-rotate(0deg);cursor:pointer}
+
+.primary-btn{display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--blue),var(--blue-lt));color:#fff;font-size:0.86rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:transform .12s,box-shadow .15s,opacity .15s;box-shadow:0 3px 12px rgba(0,75,145,.3)}
+.primary-btn svg{width:15px;height:15px}
+.primary-btn:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
+.primary-btn:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 5px 16px rgba(0,75,145,.4)}
+.primary-btn:not(:disabled):active{transform:translateY(0) scale(.98)}
+
+/* ── progress + status ──────────────────────────────────────────────── */
+.progress-wrap{margin-top:6px}
+.progress-label{font-size:0.8rem;color:var(--gold);display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:500}
 .progress-track{height:8px;border-radius:5px;background:var(--surface2);border:1px solid var(--border);overflow:hidden}
 .progress-fill{height:100%;background:linear-gradient(90deg,var(--blue),var(--gold));border-radius:5px;transition:width .4s ease}
 
-.job-status{font-size:0.78rem;border-radius:6px;padding:10px 12px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-top:8px;flex-wrap:wrap}
-.job-status.done{background:rgba(34,197,94,.08);color:var(--success);border:1px solid rgba(34,197,94,.2)}
-.job-status.error{background:rgba(239,68,68,.08);color:var(--error);border:1px solid rgba(239,68,68,.2)}
-.job-status-msg{display:flex;flex-direction:column;gap:2px}
-.job-status-meta{color:var(--muted);font-size:0.72rem}
-
-.spinner{width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0;margin-top:2px}
+.spinner{width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-.info-list{font-size:0.82rem;color:var(--muted);margin-top:20px;line-height:1.8;padding-left:16px}
+.job-status{display:flex;align-items:flex-start;gap:12px;border-radius:12px;padding:14px 16px;margin-top:10px}
+.job-status.done{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.22)}
+.job-status.error{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.22)}
+.status-icon{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.status-icon svg{width:16px;height:16px}
+.status-icon.success{background:rgba(34,197,94,.16);color:var(--success)}
+.status-icon.error{background:rgba(239,68,68,.16);color:var(--error)}
+.job-status-body{flex:1;min-width:140px;display:flex;flex-direction:column;gap:3px;align-self:center}
+.job-status-title{font-size:0.85rem;font-weight:700}
+.job-status.done .job-status-title{color:var(--success)}
+.job-status.error .job-status-title{color:var(--error)}
+.job-status-meta{color:var(--muted);font-size:0.74rem}
 
+.download-btn{align-self:center;padding:9px 16px;border-radius:9px;border:none;background:var(--success);color:#04210f;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;gap:7px;transition:transform .12s,opacity .15s}
+.download-btn svg{width:14px;height:14px}
+.download-btn:hover{opacity:.88;transform:translateY(-1px)}
+
+/* ── info chips ─────────────────────────────────────────────────────── */
+.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:20px}
+.info-chip{display:flex;align-items:flex-start;gap:9px;font-size:0.81rem;color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 13px;line-height:1.45}
+.info-chip svg{width:15px;height:15px;color:var(--gold);flex-shrink:0;margin-top:2px}
+
+/* ── lists / rows ───────────────────────────────────────────────────── */
 .reports-list{display:flex;flex-direction:column;gap:8px}
-.report-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px}
-.report-name{font-size:0.82rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.report-meta{font-size:0.72rem;color:var(--muted);margin-top:2px}
-.report-dl{font-size:0.78rem;font-weight:600;color:var(--gold);text-decoration:none;flex-shrink:0;padding:5px 10px;border:1px solid rgba(255,194,0,.35);border-radius:6px}
-.report-dl:hover{background:rgba(255,194,0,.1)}
+.report-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 14px;transition:transform .12s,border-color .15s,background .15s}
+.report-row:hover{border-color:var(--border-hover);background:var(--surface3);transform:translateY(-1px)}
+.report-info{display:flex;align-items:center;gap:12px;min-width:0}
+.file-badge{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:0.6rem;font-weight:800;letter-spacing:.02em;flex-shrink:0}
+.file-badge.pdf{background:rgba(220,20,60,.15);color:#ff6b85}
+.file-badge.xlsx{background:rgba(34,197,94,.15);color:#4ade80}
+.file-badge.err{background:rgba(239,68,68,.15);color:var(--error)}
+.report-text{min-width:0}
+.report-name{font-size:0.83rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-meta{font-size:0.72rem;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-dl{display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;font-weight:600;color:var(--gold);text-decoration:none;flex-shrink:0;padding:7px 13px;border:1px solid rgba(255,194,0,.35);border-radius:8px;transition:all .15s}
+.report-dl svg{width:13px;height:13px}
+.report-dl:hover{background:rgba(255,194,0,.12);border-color:var(--gold);transform:translateY(-1px)}
+
+.empty-state{display:flex;flex-direction:column;align-items:center;gap:10px;padding:30px 16px;color:var(--muted);text-align:center}
+.empty-state svg{width:30px;height:30px;opacity:.4}
+.empty-state-text{font-size:0.85rem}
 .empty-note{color:var(--muted);font-size:0.82rem}
+
+.skeleton-row{height:54px;border-radius:10px;background:linear-gradient(90deg,var(--surface2) 25%,var(--surface3) 37%,var(--surface2) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite;margin-bottom:8px}
+.skeleton-row:last-child{margin-bottom:0}
+@keyframes shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+
+.footer{position:relative;z-index:1;text-align:center;color:var(--muted);font-size:0.74rem;padding:8px 32px 32px;opacity:.7}
+
+@media (max-width:640px){
+  .header{padding:0 18px}
+  .logo-sub{display:none}
+  .status-pill span:last-child{display:none}
+  .tabs{padding:14px 18px}
+  .main{padding:6px 18px 26px}
+  .card{padding:20px}
+  .form-row{flex-direction:column;align-items:stretch}
+  .form-select,input[type="date"].form-select{min-width:0;width:100%}
+  .info-grid{grid-template-columns:1fr}
+  .footer{padding:8px 18px 26px}
+}
 </style>
 </head>
 <body>
 
 <header class="header">
-  <div class="logo-badge">KN</div>
-  <div>
-    <div class="logo-title">PDF Report <span>Generator</span></div>
-    <div class="logo-sub">Kotak Neo · YouTube Competitor Intelligence</div>
+  <div class="header-left">
+    <div class="logo-badge">KN</div>
+    <div>
+      <div class="logo-title">PDF Report <span>Generator</span></div>
+      <div class="logo-sub">Kotak Neo · YouTube Competitor Intelligence</div>
+    </div>
+  </div>
+  <div class="status-pill">
+    <span class="status-dot" id="api-status-dot"></span>
+    <span id="api-status-text">Checking…</span>
   </div>
 </header>
 
+<nav class="tabs">
+  <div class="tabs-inner">
+    <button class="tab-btn active" onclick="switchTab('pdf',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      PDF Report<span class="tab-badge" id="badge-pdf"></span>
+    </button>
+    <button class="tab-btn" onclick="switchTab('export',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Export Sheet<span class="tab-badge" id="badge-export"></span>
+    </button>
+    <button class="tab-btn" onclick="switchTab('master',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+      Master Data<span class="tab-badge" id="badge-master"></span>
+    </button>
+  </div>
+</nav>
+
 <main class="main">
-  <div class="section-title">Generate PDF Report</div>
-  <div class="section-desc">
-    Fetches live YouTube data for all competitor brands, builds a ~24-page
-    styled report, and renders it to PDF. When it's ready, download it below.
-  </div>
 
-  <div class="card">
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Month</label>
-        <select id="month" class="form-select"></select>
+  <!-- ═══════════════════════════════════════════════════
+       TAB: PDF Report
+  ═══════════════════════════════════════════════════ -->
+  <div id="tab-pdf" class="tab-pane active">
+    <div class="hero">
+      <div class="hero-icon blue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       </div>
-      <div class="form-group">
-        <label class="form-label">Year</label>
-        <select id="year" class="form-select" style="min-width:100px" onchange="populateMonths()"></select>
+      <div>
+        <div class="section-title">Generate PDF Report</div>
+        <div class="section-desc">Fetches live YouTube data for all competitor brands, builds a ~24-page styled report, and renders it to PDF.</div>
       </div>
-      <button class="primary-btn" id="generate-btn" onclick="runGenerate()">Generate PDF Report</button>
     </div>
 
-    <div id="status"></div>
+    <div class="card accent-blue">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Month</label>
+          <select id="month" class="form-select"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Year</label>
+          <select id="year" class="form-select" style="min-width:100px" onchange="populateMonths()"></select>
+        </div>
+        <button class="primary-btn" id="generate-btn" onclick="runGenerate()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Generate PDF Report
+        </button>
+      </div>
 
-    <ul class="info-list" id="info-list">
-      <li>Cover + Findings + Executive Summary</li>
-      <li>Followers M-O-M comparison (all brands)</li>
-      <li>Key metrics table + engagement/views charts</li>
-      <li>Top 3 posts per brand with thumbnails</li>
-      <li>Download the finished PDF directly from this page</li>
-      <li>Takes ~3–6 minutes to complete</li>
-    </ul>
-  </div>
+      <div id="status"></div>
 
-  <div class="section-title">Previous Reports</div>
-  <div class="section-desc">Generated PDFs are kept on the server until you download them.</div>
-  <div class="card">
-    <div class="reports-list" id="reports-list">
-      <div class="empty-note">Loading…</div>
+      <div class="info-grid" id="info-list">
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Cover + Findings + Executive Summary</div>
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Followers M-o-M comparison — all brands</div>
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Key metrics table + engagement/views charts</div>
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Top 3 posts per brand with thumbnails</div>
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Download directly from this page</div>
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Takes ~3–6 minutes to complete</div>
+      </div>
+    </div>
+
+    <div class="list-header">
+      <div class="list-header-title">
+        <span class="section-title" style="font-size:1rem">Previous Reports</span>
+        <span class="count-badge" id="reports-count"></span>
+      </div>
+      <button class="refresh-btn" onclick="spinRefresh(this,loadReports)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="card">
+      <div class="reports-list" id="reports-list">
+        <div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div>
+      </div>
     </div>
   </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       TAB: Export Sheet
+  ═══════════════════════════════════════════════════ -->
+  <div id="tab-export" class="tab-pane">
+    <div class="hero">
+      <div class="hero-icon gold">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </div>
+      <div>
+        <div class="section-title">Export YouTube Comparison Sheet</div>
+        <div class="section-desc">Fetches Followers, Engagement, Views and Post-count for all 8 competitor brands across the last N months and builds a downloadable Excel workbook.</div>
+      </div>
+    </div>
+
+    <div class="card accent-gold">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Months</label>
+          <select id="export-months" class="form-select" style="min-width:100px">
+            <option value="3">3</option>
+            <option value="6" selected>6</option>
+            <option value="9">9</option>
+            <option value="12">12</option>
+          </select>
+        </div>
+        <button class="primary-btn" id="export-btn" onclick="runExportSheet()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Export to Excel
+        </button>
+      </div>
+      <div id="export-status"></div>
+
+      <div class="info-grid">
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Followers, Engagement, Views &amp; Post-count</div>
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>All 8 brands, side by side</div>
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Historical data blended with live API</div>
+        <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Local .xlsx — no Google account needed</div>
+      </div>
+    </div>
+
+    <div class="list-header">
+      <div class="list-header-title">
+        <span class="section-title" style="font-size:1rem">Previous Exports</span>
+        <span class="count-badge" id="export-count"></span>
+      </div>
+      <button class="refresh-btn" onclick="spinRefresh(this,loadExportFiles)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="card">
+      <div class="reports-list" id="export-files-list">
+        <div class="skeleton-row"></div><div class="skeleton-row"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       TAB: Master Data
+  ═══════════════════════════════════════════════════ -->
+  <div id="tab-master" class="tab-pane">
+    <div class="hero">
+      <div class="hero-icon red">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+      </div>
+      <div>
+        <div class="section-title">YouTube Master Data</div>
+        <div class="section-desc">Fetches all videos for a brand/month, classifies them by theme, and builds a detailed Excel workbook (per-video rows + theme summary).</div>
+      </div>
+    </div>
+
+    <div class="info-grid" style="margin-bottom:22px">
+      <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Classifies every video into 1 of 30 themes</div>
+      <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Per-video sheet + Theme Summary sheet</div>
+      <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Cached locally — re-download anytime</div>
+      <div class="info-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Run one brand or all 8 at once</div>
+    </div>
+
+    <div class="sub-heading">Single Brand</div>
+    <div class="card accent-red">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Brand</label>
+          <select id="md-brand" class="form-select"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Month</label>
+          <select id="md-month" class="form-select"></select>
+        </div>
+        <button class="primary-btn" id="md-single-btn" onclick="runMasterDataSingle()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Create Master Data
+        </button>
+      </div>
+      <div id="md-single-status"></div>
+    </div>
+
+    <div class="sub-heading">All Brands at Once</div>
+    <div class="card accent-red">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Month</label>
+          <select id="md-all-month" class="form-select"></select>
+        </div>
+        <button class="primary-btn" id="md-all-btn" onclick="runMasterDataAll()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          Create for All Brands
+        </button>
+      </div>
+      <div id="md-all-status"></div>
+      <div id="md-all-results"></div>
+    </div>
+
+    <div class="list-header">
+      <div class="list-header-title">
+        <span class="section-title" style="font-size:1rem">Cached Files</span>
+        <span class="count-badge" id="md-count"></span>
+      </div>
+      <button class="refresh-btn" onclick="spinRefresh(this,loadMasterDataFiles)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="card">
+      <div class="reports-list" id="md-file-list">
+        <div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div>
+      </div>
+    </div>
+  </div>
+
 </main>
+
+<footer class="footer">Kotak Neo Competitor Intelligence · Runs entirely locally — no Google account required</footer>
 
 <script>
 const API = '';
+
+// ── icon library (inline SVG strings — no external assets/CDN) ──────────────
+const ICON = {
+  check:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  x:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  folder:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+};
+
+// ── generic helpers ──────────────────────────────────────────────────────────
 
 async function apiFetch(method, path, body) {
   const res = await fetch(API + path, {
@@ -145,7 +431,16 @@ async function pollJob(jobId, onUpdate, ms=2000) {
   });
 }
 
-function statusHtml(job) {
+// opts lets callers reuse this one renderer for PDF/Export/Master-Data results,
+// which all share the same {filename, size_kb}-shaped "done" payload.
+function statusHtml(job, opts) {
+  opts = opts || {};
+  const downloadBase   = opts.downloadBase   || '/api/reports/';
+  const readyLabel     = opts.readyLabel     || 'PDF ready';
+  const downloadLabel  = opts.downloadLabel  || 'Download PDF';
+  const filenameKey    = opts.filenameKey    || 'filename';
+  const extraInfo      = opts.extraInfo      || (() => '');
+
   if (!job) return '';
   const isRunning = job.status === 'pending' || job.status === 'running';
   const isDone    = job.status === 'done';
@@ -160,22 +455,105 @@ function statusHtml(job) {
   }
   if (isDone) {
     const r = job.result || {};
+    const filename = r[filenameKey];
     const sizeStr = r.size_kb ? `${(r.size_kb/1024).toFixed(1)} MB` : '';
+    const info = extraInfo(r);
+    if (!filename) {
+      return `<div class="job-status done">
+        <div class="status-icon success">${ICON.check}</div>
+        <div class="job-status-body">
+          <div class="job-status-title">${readyLabel}</div>
+          ${info ? `<div class="job-status-meta">${info}</div>` : ''}
+        </div>
+      </div>`;
+    }
     return `<div class="job-status done">
-      <div class="job-status-msg">
-        <div>✓ PDF ready</div>
-        <div class="job-status-meta">${r.filename || ''} ${sizeStr ? '· ' + sizeStr : ''}</div>
+      <div class="status-icon success">${ICON.check}</div>
+      <div class="job-status-body">
+        <div class="job-status-title">${readyLabel}</div>
+        <div class="job-status-meta">${filename}${sizeStr ? ' · ' + sizeStr : ''}${info ? ' · ' + info : ''}</div>
       </div>
-      <a class="download-btn" href="/api/reports/${encodeURIComponent(r.filename)}" download>⬇ Download PDF</a>
+      <a class="download-btn" href="${downloadBase}${encodeURIComponent(filename)}" download>${ICON.download}Download</a>
     </div>`;
   }
   const lastLine = (job.error || 'Unknown error').split('\n').filter(Boolean).slice(-2).join(' › ');
-  return `<div class="job-status error"><div>✗ Error: ${lastLine}</div></div>`;
+  return `<div class="job-status error">
+    <div class="status-icon error">${ICON.x}</div>
+    <div class="job-status-body">
+      <div class="job-status-title">Error</div>
+      <div class="job-status-meta">${lastLine}</div>
+    </div>
+  </div>`;
 }
+
+function emptyStateHtml(text) {
+  return `<div class="empty-state">${ICON.folder}<div class="empty-state-text">${text}</div></div>`;
+}
+
+function skeletonRows(n) {
+  return Array.from({length: n}, () => '<div class="skeleton-row"></div>').join('');
+}
+
+function fmtDate(mtimeSec) {
+  return new Date(mtimeSec * 1000).toLocaleString('en-US', {
+    month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
+  });
+}
+
+function monthOptions() {
+  const opts = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    opts.push(d.toLocaleString('en-US', {month:'long', year:'numeric'}));
+  }
+  return opts;
+}
+
+function populateSelect(id, options, selected) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = options.map(o => `<option${o===selected?' selected':''}>${o}</option>`).join('');
+}
+
+function setBadge(id, count) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = count > 0 ? String(count) : '';
+}
+
+async function spinRefresh(btn, fn) {
+  btn.classList.add('spinning');
+  try { await fn(); } finally { btn.classList.remove('spinning'); }
+}
+
+// ── api status ping ──────────────────────────────────────────────────────────
+
+async function pingApiStatus() {
+  const dot = document.getElementById('api-status-dot');
+  const text = document.getElementById('api-status-text');
+  try {
+    await apiFetch('GET', '/api/brands');
+    dot.className = 'status-dot online';
+    text.textContent = 'Online';
+  } catch(e) {
+    dot.className = 'status-dot offline';
+    text.textContent = 'Offline';
+  }
+}
+
+// ── tab switching ────────────────────────────────────────────────────────────
+
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── Tab: PDF Report ────────────────────────────────────────────────────────
 
 const MONTH_NAMES = ['January','February','March','April','May','June',
                       'July','August','September','October','November','December'];
-const YEARS = [2026];
 
 function isFutureMonth(monthIdx, year) {
   const now = new Date();
@@ -186,7 +564,10 @@ function isFutureMonth(monthIdx, year) {
 function populateYears() {
   const el = document.getElementById('year');
   const now = new Date();
-  el.innerHTML = YEARS.map(y => `<option value="${y}">${y}</option>`).join('');
+  const startYear = now.getFullYear() - 1;
+  const years = [];
+  for (let y = startYear; y <= now.getFullYear(); y++) years.push(y);
+  el.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
   el.value = String(now.getFullYear());
 }
 
@@ -201,6 +582,11 @@ function populateMonths() {
   // default to current month if this year, else December
   const defaultIdx = (year === now.getFullYear()) ? now.getMonth() : 11;
   el.value = MONTH_NAMES[defaultIdx];
+}
+
+function initDatePickers() {
+  populateYears();
+  populateMonths();
 }
 
 async function runGenerate() {
@@ -230,36 +616,209 @@ async function runGenerate() {
   }
 }
 
-function fmtDate(mtimeSec) {
-  return new Date(mtimeSec * 1000).toLocaleString('en-US', {
-    month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
-  });
-}
-
 async function loadReports() {
   const el = document.getElementById('reports-list');
   try {
     const { reports } = await apiFetch('GET', '/api/reports');
+    setBadge('badge-pdf', reports.length);
+    setBadge('reports-count', reports.length);
     if (!reports.length) {
-      el.innerHTML = '<div class="empty-note">No reports generated yet.</div>';
+      el.innerHTML = emptyStateHtml('No reports generated yet.');
       return;
     }
     el.innerHTML = reports.map(r => `
       <div class="report-row">
-        <div>
-          <div class="report-name">${r.filename}</div>
-          <div class="report-meta">${(r.size_kb/1024).toFixed(1)} MB · ${fmtDate(r.mtime)}</div>
+        <div class="report-info">
+          <div class="file-badge pdf">PDF</div>
+          <div class="report-text">
+            <div class="report-name">${r.filename}</div>
+            <div class="report-meta">${(r.size_kb/1024).toFixed(1)} MB · ${fmtDate(r.mtime)}</div>
+          </div>
         </div>
-        <a class="report-dl" href="/api/reports/${encodeURIComponent(r.filename)}" download>⬇ Download</a>
+        <a class="report-dl" href="/api/reports/${encodeURIComponent(r.filename)}" download>${ICON.download}Download</a>
       </div>`).join('');
   } catch(e) {
     el.innerHTML = `<div class="empty-note">Could not load reports: ${e.message}</div>`;
   }
 }
 
-populateYears();
-populateMonths();
+// ── Tab: Export Sheet ────────────────────────────────────────────────────────
+
+function exportOpts() {
+  return {
+    downloadBase: '/api/export/youtube/download/',
+    readyLabel: 'Export ready',
+    downloadLabel: 'Download Excel',
+  };
+}
+
+async function runExportSheet() {
+  const months = parseInt(document.getElementById('export-months').value, 10);
+  const btn = document.getElementById('export-btn');
+  const statusEl = document.getElementById('export-status');
+
+  btn.disabled = true;
+  statusEl.innerHTML = statusHtml({status:'running', progress:{label:'Queued — waiting to start…', pct:0}});
+
+  try {
+    const { job_id } = await apiFetch('POST', '/api/export/youtube', {months});
+    await pollJob(job_id, j => { statusEl.innerHTML = statusHtml(j, exportOpts()); });
+    loadExportFiles();
+  } catch(e) {
+    statusEl.innerHTML = statusHtml({status:'error', error: e.message});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadExportFiles() {
+  const el = document.getElementById('export-files-list');
+  try {
+    const { files } = await apiFetch('GET', '/api/export/youtube/list');
+    setBadge('badge-export', files.length);
+    setBadge('export-count', files.length);
+    if (!files.length) {
+      el.innerHTML = emptyStateHtml('No exports generated yet.');
+      return;
+    }
+    el.innerHTML = files.map(f => `
+      <div class="report-row">
+        <div class="report-info">
+          <div class="file-badge xlsx">XLS</div>
+          <div class="report-text">
+            <div class="report-name">${f.filename}</div>
+            <div class="report-meta">${(f.size_kb/1024).toFixed(1)} MB · ${fmtDate(f.mtime)}</div>
+          </div>
+        </div>
+        <a class="report-dl" href="/api/export/youtube/download/${encodeURIComponent(f.filename)}" download>${ICON.download}Download</a>
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="empty-note">Could not load exports: ${e.message}</div>`;
+  }
+}
+
+// ── Tab: Master Data ───────────────────────────────────────────────────────
+
+function mdOpts() {
+  return {
+    downloadBase: '/api/master-data/download/',
+    readyLabel: 'Master data ready',
+    downloadLabel: 'Download Excel',
+    filenameKey: 'xlsx_filename',
+    extraInfo: r => (r.total_videos != null) ? `${r.total_videos} videos · ${r.themes_found ?? 0} themes` : '',
+  };
+}
+
+async function initMasterDataTab() {
+  const months = monthOptions();
+  populateSelect('md-month', months, months[0]);
+  populateSelect('md-all-month', months, months[0]);
+
+  try {
+    const { brands } = await apiFetch('GET', '/api/brands');
+    populateSelect('md-brand', brands, brands[0]);
+  } catch(e) { console.warn('Could not load brands', e); }
+
+  loadMasterDataFiles();
+}
+
+async function runMasterDataSingle() {
+  const brand = document.getElementById('md-brand').value;
+  const month = document.getElementById('md-month').value;
+  const btn = document.getElementById('md-single-btn');
+  const statusEl = document.getElementById('md-single-status');
+
+  btn.disabled = true;
+  statusEl.innerHTML = statusHtml({status:'running', progress:{label:'Queued — waiting to start…', pct:0}});
+
+  try {
+    const { job_id } = await apiFetch('POST', '/api/master-data', {brand, month});
+    await pollJob(job_id, j => { statusEl.innerHTML = statusHtml(j, mdOpts()); });
+    loadMasterDataFiles();
+  } catch(e) {
+    statusEl.innerHTML = statusHtml({status:'error', error: e.message});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function runMasterDataAll() {
+  const month = document.getElementById('md-all-month').value;
+  const btn = document.getElementById('md-all-btn');
+  const statusEl = document.getElementById('md-all-status');
+  const resultsEl = document.getElementById('md-all-results');
+
+  btn.disabled = true;
+  statusEl.innerHTML = statusHtml({status:'running', progress:{label:'Queued — waiting to start…', pct:0}});
+  resultsEl.innerHTML = '';
+
+  try {
+    const { job_id } = await apiFetch('POST', '/api/master-data/all', {month});
+    const job = await pollJob(job_id, j => {
+      if (j.status !== 'done') statusEl.innerHTML = statusHtml(j);
+    });
+
+    statusEl.innerHTML = `<div class="job-status done"><div class="status-icon success">${ICON.check}</div><div class="job-status-body"><div class="job-status-title">All brands processed</div></div></div>`;
+    const results = Array.isArray(job.result) ? job.result : [];
+    resultsEl.innerHTML = '<div class="reports-list" style="margin-top:12px">' + results.map(r => `
+      <div class="report-row">
+        <div class="report-info">
+          <div class="file-badge ${r.success === false ? 'err' : 'xlsx'}">${r.success === false ? ICON.x : 'XLS'}</div>
+          <div class="report-text">
+            <div class="report-name">${r.brand}</div>
+            <div class="report-meta">${r.success === false
+              ? (r.error || 'Failed').split('\n').slice(-1)[0]
+              : `${r.total_videos ?? 0} videos · ${r.themes_found ?? 0} themes`}</div>
+          </div>
+        </div>
+        ${r.xlsx_filename ? `<a class="report-dl" href="/api/master-data/download/${encodeURIComponent(r.xlsx_filename)}" download>${ICON.download}Download</a>` : ''}
+      </div>`).join('') + '</div>';
+
+    loadMasterDataFiles();
+  } catch(e) {
+    statusEl.innerHTML = statusHtml({status:'error', error: e.message});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadMasterDataFiles() {
+  const el = document.getElementById('md-file-list');
+  el.innerHTML = skeletonRows(3);
+  try {
+    const { files } = await apiFetch('GET', '/api/master-data/list');
+    setBadge('badge-master', files.length);
+    setBadge('md-count', files.length);
+    if (!files.length) {
+      el.innerHTML = emptyStateHtml('No cached master data files.');
+      return;
+    }
+    el.innerHTML = files.map(f => `
+      <div class="report-row">
+        <div class="report-info">
+          <div class="file-badge ${f.xlsx_filename ? 'xlsx' : 'err'}">${f.xlsx_filename ? 'XLS' : '—'}</div>
+          <div class="report-text">
+            <div class="report-name">${f.brand} — ${f.month}</div>
+            <div class="report-meta">${f.total_videos} videos</div>
+          </div>
+        </div>
+        ${f.xlsx_filename
+          ? `<a class="report-dl" href="/api/master-data/download/${encodeURIComponent(f.xlsx_filename)}" download>${ICON.download}Download</a>`
+          : '<span class="empty-note">no xlsx</span>'}
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="empty-note">Could not load files: ${e.message}</div>`;
+  }
+}
+
+// ── init ─────────────────────────────────────────────────────────────────────
+
+initDatePickers();
 loadReports();
+initMasterDataTab();
+loadExportFiles();
+pingApiStatus();
+setInterval(pingApiStatus, 30000);
 </script>
 </body>
 </html>

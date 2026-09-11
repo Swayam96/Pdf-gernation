@@ -12,8 +12,8 @@ Setup:
     export YOUTUBE_API_KEY=... (Mac/Linux)
 """
 
-import os, sys, json, ssl, urllib.request, urllib.parse, math
-from datetime import datetime
+import os, sys, json, ssl, urllib.request, urllib.parse, math, random
+from datetime import datetime, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -59,6 +59,115 @@ HIST_SUBS = {
     "Upstox":             [971000,974000,979000,982000,984000,985000,986000,991000,998000,1000000,1010000,1010000,1020000,1020000,1020000,1020000,1020000,1020000,1010000,1010000,1000000],
     "Zerodha":            [N,N,650000,664000,674000,686000,691000,700000,705000,713000,716000,720000,738000,741000,746000,748000,750000,753000,755000,756000,758000],
 }
+
+# ── Subscriber history — static seed (Oct-24…Jun-26) merged with a persisted
+# JSON snapshot of every live subscriber count fetched since, so the M-o-M slides'
+# last-N-months window keeps sliding forward instead of freezing at the end of
+# the seed table. ────────────────────────────────────────────────────────────
+_MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+_SUB_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "subscriber_history.json")
+_subscriber_history_cache = None
+
+def prev_month_labels(curr_label, n):
+    """Return the n calendar-month labels ('Mon-YY') immediately before curr_label,
+    oldest first — computed by date arithmetic, not by slicing a fixed-length list,
+    so the window always tracks whichever month is actually being reported on."""
+    mon_str, yy = curr_label.split("-")
+    month = _MONTH_ABBR.index(mon_str) + 1
+    year = 2000 + int(yy)
+    labels = []
+    for _ in range(n):
+        month -= 1
+        if month == 0:
+            month, year = 12, year - 1
+        labels.append(f"{_MONTH_ABBR[month-1]}-{year % 100:02d}")
+    labels.reverse()
+    return labels
+
+def _load_subscriber_history():
+    global _subscriber_history_cache
+    if _subscriber_history_cache is None:
+        try:
+            with open(_SUB_HISTORY_PATH, encoding="utf-8") as f:
+                _subscriber_history_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            _subscriber_history_cache = {}
+    return _subscriber_history_cache
+
+def save_subscriber_snapshot(curr_m, subs_by_brand):
+    """Persist each brand's subscriber count under the 'Mon-YY' key curr_m.
+    Never clobbers an already-captured month — YouTube's API only reports the
+    live count "right now", so once a month's count is captured that's the best
+    record we'll ever have of it; a later re-fetch reflects a different month."""
+    global _subscriber_history_cache
+    history = _load_subscriber_history()
+    changed = False
+    for brand, count in subs_by_brand.items():
+        if not isinstance(count, int):
+            continue
+        bucket = history.setdefault(brand, {})
+        if curr_m not in bucket:
+            bucket[curr_m] = count
+            changed = True
+    if changed:
+        with open(_SUB_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2)
+        _subscriber_history_cache = history
+
+def hist_val(brand, month_label):
+    """Subscriber count for brand in month_label ('Mon-YY') — a persisted live
+    snapshot if one was ever captured, else the static seed table, else None."""
+    persisted = _load_subscriber_history().get(brand, {})
+    if month_label in persisted:
+        return persisted[month_label]
+    if month_label in HIST_MONTHS:
+        idx = HIST_MONTHS.index(month_label)
+        subs = HIST_SUBS.get(brand, [])
+        if idx < len(subs):
+            return subs[idx]
+    return None
+
+def _month_ordinal(label):
+    mon_str, yy = label.split("-")
+    return (2000 + int(yy)) * 12 + _MONTH_ABBR.index(mon_str)
+
+def _shift_month(label, delta):
+    ordinal = _month_ordinal(label) + delta
+    year, month0 = divmod(ordinal, 12)
+    return f"{_MONTH_ABBR[month0]}-{year % 100:02d}"
+
+def _nearest_known(brand, month_label, step, max_steps=60):
+    cur = month_label
+    for _ in range(max_steps):
+        cur = _shift_month(cur, step)
+        val = hist_val(brand, cur)
+        if val is not None:
+            return cur, val
+    return None, None
+
+def hist_val_est(brand, month_label):
+    """(value, is_estimated) for brand in month_label. Real value if a snapshot or
+    seed entry exists; otherwise linearly interpolated between the nearest known
+    months on either side. A skipped month (e.g. no report was ever generated for
+    it) can never be fetched after the fact — YouTube's API only reports the
+    subscriber count "right now", not historical counts — so interpolation between
+    the surrounding real values is the best estimate available. Works for a gap of
+    any size, since the "right" anchor is whichever future month eventually gets
+    a real snapshot (including the month currently being reported on)."""
+    val = hist_val(brand, month_label)
+    if val is not None:
+        return val, False
+    left_m, left_v = _nearest_known(brand, month_label, -1)
+    right_m, right_v = _nearest_known(brand, month_label, 1)
+    if left_v is not None and right_v is not None:
+        left_i, right_i, cur_i = _month_ordinal(left_m), _month_ordinal(right_m), _month_ordinal(month_label)
+        frac = (cur_i - left_i) / (right_i - left_i)
+        return round(left_v + (right_v - left_v) * frac), True
+    if left_v is not None:
+        return left_v, True
+    if right_v is not None:
+        return right_v, True
+    return None, False
 
 # ── Colors ────────────────────────────────────────────────────────────
 C = {
@@ -125,6 +234,13 @@ FOOTER_HTML = """<div class="footer">
 def page_num(n):
     return f'<div class="pg">{n}</div>'
 
+def pick_phrase(phrasings):
+    """Pick one of several equivalent phrasings for a data-driven sentence.
+    Randomized every call so re-running a report for the same month can still
+    land on different wording — avoids every report reading like a fixed
+    template with only the numbers swapped."""
+    return random.choice(phrasings)
+
 # ── Helpers ───────────────────────────────────────────────────────────
 def fmt(n, short=False):
     if n is None or n == 0: return "-"
@@ -188,23 +304,23 @@ def get_channel_stats(cid):
             "views":       int(st.get("viewCount", 0))}
 
 # Safety backstop on how many uploads back we'll page through a channel's history
-# to find videos published in the requested month — NOT a tight per-month budget.
+# to find videos published in the requested range — NOT a tight per-range budget.
 # Measured against real channel data: the fastest-posting competitor here needs
 # ~750 videos scanned to reach back to January 2026 (the oldest month the dashboard
 # offers). Set with a comfortable margin above that so it reliably reaches any
-# offered month without ever silently under-reporting "0 posts" due to running
+# offered range without ever silently under-reporting "0 posts" due to running
 # out of budget. playlistItems.list costs 1 quota unit/page regardless of
 # maxResults, so this has negligible quota impact even at the cap.
 MONTH_SEARCH_CAP = 1500
 _PAGE_SIZE = 50  # YouTube API max per playlistItems page
 
-def get_videos_for_month(cid, year, month):
+def get_videos_in_range(cid, start_date, end_date):
     """
     Page backwards through a channel's uploads playlist (newest first) collecting
-    every video actually published in the given (year, month), stopping once we've
-    paged past that month (uploads are strictly newest-first, so once we see a video
-    older than the target month, nothing further back can be in it) or hit
-    MONTH_SEARCH_CAP videos scanned.
+    every video published within [start_date, end_date] inclusive (both "YYYY-MM-DD"
+    strings), stopping once we've paged past start_date (uploads are strictly
+    newest-first, so once we see a video older than the range, nothing further back
+    can be in it) or hit MONTH_SEARCH_CAP videos scanned.
     """
     playlist_id = "UU" + cid[2:]
     matched_ids, matched_pub = [], {}
@@ -227,13 +343,13 @@ def get_videos_for_month(cid, year, month):
             pub_date = it["contentDetails"].get("videoPublishedAt", "")[:10]
             if not pub_date:
                 continue
-            pub_year, pub_month = int(pub_date[:4]), int(pub_date[5:7])
-            if (pub_year, pub_month) == (year, month):
+            # ISO "YYYY-MM-DD" strings sort lexicographically same as chronologically.
+            if start_date <= pub_date <= end_date:
                 vid_id = it["contentDetails"]["videoId"]
                 matched_ids.append(vid_id)
                 matched_pub[vid_id] = pub_date
-            elif (pub_year, pub_month) < (year, month):
-                # Uploads are newest-first — once we're past the target month, stop.
+            elif pub_date < start_date:
+                # Uploads are newest-first — once we're past the range start, stop.
                 stop = True
                 break
         if stop:
@@ -265,9 +381,9 @@ def get_videos_for_month(cid, year, month):
             })
     return result
 
-def _fetch_one_brand(brand, cid, year, month):
+def _fetch_one_brand(brand, cid, start_date, end_date):
     st   = get_channel_stats(cid)
-    vids = get_videos_for_month(cid, year, month)
+    vids = get_videos_in_range(cid, start_date, end_date)
     eng  = sum(v["likes"] + v["comments"] for v in vids)
     views = sum(v["views"] for v in vids)
     return brand, {
@@ -278,16 +394,16 @@ def _fetch_one_brand(brand, cid, year, month):
         "posts":         len(vids),
     }, vids
 
-def fetch_all_youtube_data(year, month):
+def fetch_all_youtube_data(start_date, end_date):
     # The 8 brands are fully independent lookups — fetched concurrently since each
-    # is dominated by network latency (and, for older months, paginating deep into
-    # a channel's upload history), not CPU. Cuts an older-month fetch from
+    # is dominated by network latency (and, for older ranges, paginating deep into
+    # a channel's upload history), not CPU. Cuts an older-range fetch from
     # "8 brands x deep pagination, one after another" to "roughly 1x, in parallel."
     stats, videos = {}, {}
     total = len(COMPETITOR_CHANNELS)
     done = 0
     with ThreadPoolExecutor(max_workers=total) as pool:
-        futures = {pool.submit(_fetch_one_brand, brand, cid, year, month): brand
+        futures = {pool.submit(_fetch_one_brand, brand, cid, start_date, end_date): brand
                    for brand, cid in COMPETITOR_CHANNELS.items()}
         for future in as_completed(futures):
             brand = futures[future]
@@ -299,21 +415,40 @@ def fetch_all_youtube_data(year, month):
             _progress("fetch", f"Fetching YouTube data ({done}/{total} brands)", 5 + int(25 * done / total))
     return stats, videos
 
+def _theme_breakdown(kotak_videos):
+    """Classify each Kotak Neo video this month by real title-keyword theme
+    (themes.classify_theme — the same classifier the Master Data tool uses),
+    and aggregate posts/engagement/views per theme. Only themes with at least
+    one video this month appear — no fabricated split of the monthly total."""
+    from themes import classify_theme
+    buckets = {}
+    for v in kotak_videos:
+        theme = classify_theme(v["title"])
+        b = buckets.setdefault(theme, {"posts": 0, "views": 0, "engagement": 0})
+        b["posts"] += 1
+        b["views"] += v["views"]
+        b["engagement"] += v["likes"] + v["comments"]
+    return buckets
+
 def build_summary(stats, videos, month_label):
-    prev_subs = {b: (HIST_SUBS.get(b, [0])[-1] or 0) for b in BRANDS}
+    curr_m = month_label[:3] + "-" + month_label[-2:]
+    prev_m = prev_month_labels(curr_m, 1)[0]
+    prev_subs_est = {b: hist_val_est(b, prev_m) for b in BRANDS}
     top3 = {b: sorted(videos.get(b, []), key=lambda v: v["views"], reverse=True)[:3] for b in BRANDS}
     by_eng   = sorted(BRANDS, key=lambda b: stats[b]["engagement"],  reverse=True)
     by_subs  = sorted(BRANDS, key=lambda b: stats[b]["subscribers"],  reverse=True)
     by_views = sorted(BRANDS, key=lambda b: stats[b]["recent_views"], reverse=True)
     return {
+        "theme_breakdown": _theme_breakdown(videos.get("Kotak Neo", [])),
         "month": month_label,
         "brands": BRANDS,
         "stats": {b: {
             "subscribers":   stats[b]["subscribers"],
             "subs_fmt":      fmt(stats[b]["subscribers"], short=True),
-            "prev_subs":     prev_subs[b],
-            "prev_subs_fmt": fmt(prev_subs[b], short=True),
-            "sub_growth":    pct(stats[b]["subscribers"], prev_subs[b]),
+            "prev_subs":     prev_subs_est[b][0] or 0,
+            "prev_subs_estimated": prev_subs_est[b][1],
+            "prev_subs_fmt": fmt(prev_subs_est[b][0], short=True),
+            "sub_growth":    pct(stats[b]["subscribers"], prev_subs_est[b][0]),
             "engagement":    stats[b]["engagement"],
             "eng_fmt":       fmt(stats[b]["engagement"]),
             "recent_views":  stats[b]["recent_views"],
@@ -511,25 +646,66 @@ def slide_findings(s, page):
     kotak_rank_e = s["kotak_rank"]["engagement"]
     kotak_rank_v = s["kotak_rank"]["views"]
 
-    top2_eng = r["by_engagement"][:2]
-    finding_title = f"YouTube: {eng_leader} Leads Engagement While {views_leader} Dominates Views"
+    finding_title = pick_phrase([
+        f"YouTube: {eng_leader} Leads Engagement While {views_leader} Dominates Views",
+        f"YouTube: {eng_leader} Tops Engagement, {views_leader} Leads on Views for {month}",
+        f"{month} YouTube Landscape — {eng_leader} on Engagement, {views_leader} on Views",
+    ])
+
+    # Fastest-growing brands this month, by subscriber growth % — replaces a
+    # hardcoded "Dhan and Markets By Zerodha" claim with whoever actually grew.
+    growth_ranked = sorted(
+        (b for b in BRANDS if st[b]["prev_subs"]),
+        key=lambda b: (st[b]["subscribers"] - st[b]["prev_subs"]) / st[b]["prev_subs"],
+        reverse=True
+    )
+    top_growth = [b for b in growth_ranked if b != subs_leader][:2]
+    growth_clause = (" and ".join(top_growth) if top_growth else subs_leader) + \
+        (" continue" if len(top_growth) != 1 else " continues")
+
+    # Kotak Neo's top-performing content theme this month, by views-per-post —
+    # replaces a hardcoded "financial education dominates" claim that never
+    # reflected what Kotak Neo actually posted.
+    breakdown = s.get("theme_breakdown", {})
+    if breakdown:
+        top_theme = max(breakdown.items(), key=lambda kv: kv[1]["views"] / kv[1]["posts"] if kv[1]["posts"] else 0)
+        theme_name, theme_stats = top_theme
+        theme_line = pick_phrase([
+            f"\"{theme_name}\" was Kotak Neo's top-performing content theme in {month}, "
+            f"averaging {fmt(theme_stats['views'] // theme_stats['posts'], short=True)} views per video "
+            f"across {theme_stats['posts']} upload(s).",
+            f"Among Kotak Neo's {month} uploads, \"{theme_name}\" content drew the strongest "
+            f"viewership at {fmt(theme_stats['views'], short=True)} total views.",
+        ])
+    else:
+        theme_line = f"No Kotak Neo videos were published in {month} to classify by content theme."
 
     observations = [
         ("Content volume drives performance",
-         f"{eng_leader} leads total engagement with {st[eng_leader]['eng_fmt']} interactions across "
-         f"{st[eng_leader]['posts']} videos, demonstrating consistent content output."),
+         pick_phrase([
+             f"{eng_leader} leads total engagement with {st[eng_leader]['eng_fmt']} interactions across "
+             f"{st[eng_leader]['posts']} videos, demonstrating consistent content output.",
+             f"With {st[eng_leader]['posts']} videos generating {st[eng_leader]['eng_fmt']} interactions, "
+             f"{eng_leader} tops the engagement rankings this month.",
+         ])),
         ("Subscriber base growth continues",
-         f"{subs_leader} maintains the largest subscriber base. Dhan and Markets By Zerodha "
-         f"continue to post strong month-on-month growth relative to channel age."),
+         pick_phrase([
+             f"{subs_leader} maintains the largest subscriber base. {growth_clause} to post the "
+             f"fastest month-on-month growth among tracked brands.",
+             f"{subs_leader} holds the largest audience overall, while {growth_clause} to grow "
+             f"fastest in percentage terms this month.",
+         ])),
         ("Kotak Neo performance",
-         f"Kotak Neo ranks #{kotak_rank_e} in total engagement ({kotak_eng}) and "
-         f"#{kotak_rank_v} in total views ({kotak_views}) for {month}."),
+         pick_phrase([
+             f"Kotak Neo ranks #{kotak_rank_e} in total engagement ({kotak_eng}) and "
+             f"#{kotak_rank_v} in total views ({kotak_views}) for {month}.",
+             f"For {month}, Kotak Neo sits at #{kotak_rank_e} on engagement ({kotak_eng}) and "
+             f"#{kotak_rank_v} on views ({kotak_views}) among the 8 tracked brands.",
+         ])),
         ("Engagement = Likes + Comments across all channels",
          "YouTube removed public share counts from its API in 2015. "
          "Rankings reflect Likes + Comments only."),
-        ("Financial education content dominates",
-         "IPO updates, market insights and financial education videos continue to drive the "
-         "highest viewership and engagement across all 8 competitor channels."),
+        ("Kotak Neo's top content theme", theme_line),
     ]
 
     icons = ["📊","📈","🏆","⚠️","🎯"]
@@ -591,6 +767,14 @@ def slide_summary(s, page):
     views_leader= r["by_views"][0]
     kotak       = st["Kotak Neo"]
 
+    growth_ranked = sorted(
+        (b for b in BRANDS if st[b]["prev_subs"]),
+        key=lambda b: (st[b]["subscribers"] - st[b]["prev_subs"]) / st[b]["prev_subs"],
+        reverse=True
+    )
+    fastest_grower = growth_ranked[0] if growth_ranked else subs_leader
+    fastest_growth_pct = st[fastest_grower]["sub_growth"] if growth_ranked else ""
+
     bullets = [
         f"On YouTube, the best-performing brands in total engagement were "
         f"<b>{top3_eng[0]}</b>, <b>{top3_eng[1]}</b>, and <b>{top3_eng[2]}</b>.",
@@ -601,7 +785,8 @@ def slide_summary(s, page):
         f"Kotak Neo posted <b>{kotak['posts']}</b> videos generating "
         f"<b>{kotak['views_fmt']}</b> views and <b>{kotak['eng_fmt']}</b> engagements in {month}.",
         f"<b>{subs_leader}</b> has the largest subscriber base at {st[subs_leader]['subs_fmt']} subscribers.",
-        "Markets By Zerodha continues to show strong growth momentum relative to its channel age.",
+        (f"<b>{fastest_grower}</b> posted the fastest subscriber growth this month at {fastest_growth_pct}."
+         if growth_ranked else "No brand-over-brand subscriber growth data is available for this month."),
         "Engagement = Likes + Comments across all YouTube channels "
         "(Shares not available via public API).",
     ]
@@ -650,9 +835,10 @@ def slide_summary(s, page):
 def slide_followers_mom(s, page):
     month  = s["month"]
     st     = s["stats"]
-    last6  = HIST_MONTHS[-6:]          # 6 months keeps columns wide → big text
     curr_m = month[:3] + "-" + month[-2:]
+    last6  = prev_month_labels(curr_m, 6)   # 6 months immediately before curr_m — a true sliding window
     all_m  = last6 + [curr_m]
+    seed_m = prev_month_labels(last6[0], 1)[0]  # month before the window, to seed the first % change
 
     # Build header row — use <th> not <td>
     header_cells = '<th class="hbrand">Brand</th>' + "".join(
@@ -661,43 +847,43 @@ def slide_followers_mom(s, page):
     )
 
     # Build data rows
+    any_estimated = False
     rows_html = ""
     for bi, brand in enumerate(BRANDS):
-        hist = HIST_SUBS.get(brand, [])
-        prev = None
-        # seed prev from the month before last6 so first col has a % change
-        if last6:
-            first_idx = HIST_MONTHS.index(last6[0]) if last6[0] in HIST_MONTHS else -1
-            if first_idx > 0:
-                seed = hist[first_idx - 1] if (first_idx - 1) < len(hist) else None
-                if seed: prev = seed
+        prev, _ = hist_val_est(brand, seed_m)
         cells = f'<td class="brand-cell">{brand}</td>'
         for m in all_m:
             if m == curr_m:
-                c_val = st[brand]["subscribers"]
-                p_str = pct(c_val, prev) if prev else ""
-                pc    = pct_color(p_str)
-                cells += (f'<td class="curr-col">'
-                          f'<div class="val">{fmt(c_val)}</div>'
-                          f'<div class="pctv" style="color:{pc}">{p_str}</div></td>')
-                prev = c_val
+                val, is_est = st[brand]["subscribers"], False
             else:
-                idx = HIST_MONTHS.index(m) if m in HIST_MONTHS else -1
-                val = hist[idx] if 0 <= idx < len(hist) else None
-                if val:
-                    p_str = pct(val, prev) if prev else ""
-                    pc    = pct_color(p_str)
-                    cells += (f'<td><div class="val">{fmt(val)}</div>'
-                              f'<div class="pctv" style="color:{pc}">{p_str}</div></td>')
-                    prev = val
-                else:
-                    cells += '<td><div class="val">-</div></td>'
+                val, is_est = hist_val_est(brand, m)
+            if val:
+                any_estimated = any_estimated or is_est
+                p_str = pct(val, prev) if prev else ""
+                pc    = pct_color(p_str)
+                cls   = "curr-col" if m == curr_m else ""
+                vtxt  = ("~" if is_est else "") + fmt(val)
+                cells += (f'<td class="{cls}">'
+                          f'<div class="val{" est" if is_est else ""}">{vtxt}</div>'
+                          f'<div class="pctv" style="color:{pc}">{p_str}</div></td>')
+                prev = val
+            else:
+                cells += '<td><div class="val">-</div></td>'
 
         bg = "#fff" if bi % 2 == 0 else C["pink"]
         rows_html += f'<tr style="background:{bg}">{cells}</tr>'
 
-    note = (f"Kotak Neo continued steady growth in {month}. "
-            f"% shows month-over-month change. Data from YouTube API & tracked records.")
+    fastest_brand = max(BRANDS, key=lambda b: st[b]["subscribers"] - (st[b]["prev_subs"] or st[b]["subscribers"]))
+    note = pick_phrase([
+        f"{fastest_brand} added the most subscribers among tracked brands in {month}. "
+        f"% shows month-over-month change. Data from YouTube API & tracked records.",
+        f"Subscriber counts as of {month}, with {fastest_brand} posting the largest gain. "
+        f"% reflects month-over-month change from YouTube API & tracked records.",
+        f"{month} subscriber snapshot — {fastest_brand} led growth among the 8 tracked brands. "
+        f"% columns show month-over-month change.",
+    ])
+    if any_estimated:
+        note += " ~ marks a month with no live snapshot on record, estimated from surrounding data."
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -715,6 +901,7 @@ td{{padding:7px 4px;text-align:center;border:1px solid #e4e8f0;vertical-align:mi
 td.brand-cell{{text-align:left;padding-left:12px;font-weight:700;font-size:13px;
                width:155px;color:#1a1a2e;}}
 .val{{font-size:13px;font-weight:700;color:#1a1a2e;}}
+.val.est{{color:#888;font-style:italic;}}
 .pctv{{font-size:10.5px;margin-top:2px;font-weight:600;}}
 .curr-col{{background:#EEF4FF!important;}}
 tr:nth-child(even) td{{background:#f4f7ff;}}
@@ -749,38 +936,28 @@ def slide_kotak_mom(s, page):
     month  = s["month"]
     st     = s["stats"]
     kotak  = st["Kotak Neo"]
-    last6  = HIST_MONTHS[-6:]
     curr_m = month[:3] + "-" + month[-2:]
+    last6  = prev_month_labels(curr_m, 6)   # 6 months immediately before curr_m — a true sliding window
     all_m  = last6 + [curr_m]
-
-    hist_subs = HIST_SUBS.get("Kotak Neo", [])
-
-    def hist_sub(m):
-        if m not in HIST_MONTHS: return None
-        idx = HIST_MONTHS.index(m)
-        return hist_subs[idx] if idx < len(hist_subs) else None
+    seed_m = prev_month_labels(last6[0], 1)[0]
 
     # Build subscriber trend row with % changes
     sub_cells = ""
-    prev_v = None
-    # seed prev from month before last6
-    if last6:
-        first_idx = HIST_MONTHS.index(last6[0]) if last6[0] in HIST_MONTHS else -1
-        if first_idx > 0:
-            seed = hist_subs[first_idx - 1] if (first_idx - 1) < len(hist_subs) else None
-            if seed: prev_v = seed
+    prev_v, _ = hist_val_est("Kotak Neo", seed_m)
 
     for m in all_m:
         is_curr = (m == curr_m)
-        v = kotak["subscribers"] if is_curr else hist_sub(m)
+        v, is_est = (kotak["subscribers"], False) if is_curr else hist_val_est("Kotak Neo", m)
         if v:
             p_str = pct(v, prev_v) if prev_v else ""
             pc    = pct_color(p_str)
             bg    = "#004B91" if is_curr else ("#fff" if all_m.index(m) % 2 == 0 else C["pink"])
             fc    = "#fff" if is_curr else "#1a1a2e"
+            vtxt  = ("~" if is_est else "") + fmt(v)
             sub_cells += (f'<td style="background:{bg};color:{fc};text-align:center;'
-                          f'padding:10px 6px;border:1px solid #ddd;font-weight:700;font-size:14px;">'
-                          f'{fmt(v)}<br>'
+                          f'padding:10px 6px;border:1px solid #ddd;font-weight:700;font-size:14px;'
+                          f'{"font-style:italic;opacity:0.75;" if is_est else ""}">'
+                          f'{vtxt}<br>'
                           f'<small style="font-size:11px;color:{"#90EE90" if is_curr else pc}">{p_str}</small></td>')
             prev_v = v
         else:
@@ -795,7 +972,7 @@ def slide_kotak_mom(s, page):
 
     # KPI cards for current month
     curr_sub   = kotak["subscribers"]
-    prev_sub   = hist_sub(last6[-1]) if last6 else None
+    prev_sub   = kotak["prev_subs"] or None
     sub_growth = pct(curr_sub, prev_sub) if prev_sub else "—"
     sub_growth_abs = f"+{fmt(curr_sub - prev_sub)}" if prev_sub and curr_sub > prev_sub else (fmt(curr_sub - prev_sub) if prev_sub else "—")
     sg_color   = pct_color(sub_growth)
@@ -814,8 +991,14 @@ def slide_kotak_mom(s, page):
           <div class="kpi-value" style="color:{fc};">{value}</div>
         </div>"""
 
-    note = (f"Kotak Neo posted {kotak['posts']} videos in {month}, "
-            f"generating {kotak['views_fmt']} views and {kotak['eng_fmt']} engagements.")
+    note = pick_phrase([
+        f"Kotak Neo posted {kotak['posts']} videos in {month}, "
+        f"generating {kotak['views_fmt']} views and {kotak['eng_fmt']} engagements.",
+        f"In {month}, Kotak Neo published {kotak['posts']} videos totalling "
+        f"{kotak['views_fmt']} views and {kotak['eng_fmt']} in engagement.",
+        f"{kotak['posts']} videos went live on Kotak Neo's channel in {month}, "
+        f"drawing {kotak['views_fmt']} views and {kotak['eng_fmt']} engagements.",
+    ])
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -970,8 +1153,14 @@ def slide_engagement_chart(s, page):
     )
 
     insights = [
-        f"<b>{eng_leader}</b> leads total engagement this month among all 8 brands.",
-        f"Kotak Neo holds <b>#{kotak_rank}</b> position with {kotak_eng} engagement.",
+        pick_phrase([
+            f"<b>{eng_leader}</b> leads total engagement this month among all 8 brands.",
+            f"<b>{eng_leader}</b> tops the engagement leaderboard for {month}.",
+        ]),
+        pick_phrase([
+            f"Kotak Neo holds <b>#{kotak_rank}</b> position with {kotak_eng} engagement.",
+            f"Kotak Neo sits at <b>#{kotak_rank}</b> this month, totalling {kotak_eng} in engagement.",
+        ]),
         "Gold connected line shows No. of Posts per brand.",
         "Purple bars = Likes + Comments (Engagement).",
     ]
@@ -979,8 +1168,12 @@ def slide_engagement_chart(s, page):
         f'<div class="ins"><span class="ins-dot"></span><span>{i}</span></div>'
         for i in insights
     )
-    headline = (f"Kotak Neo ranks #{kotak_rank} in total engagement — "
-                f"{eng_leader} leads with {st[eng_leader]['eng_fmt']} interactions")
+    headline = pick_phrase([
+        f"Kotak Neo ranks #{kotak_rank} in total engagement — "
+        f"{eng_leader} leads with {st[eng_leader]['eng_fmt']} interactions",
+        f"{eng_leader} leads {month}'s engagement race with {st[eng_leader]['eng_fmt']} interactions — "
+        f"Kotak Neo ranks #{kotak_rank}",
+    ])
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -1050,8 +1243,14 @@ def slide_views_chart(s, page):
     )
 
     insights = [
-        f"<b>{views_leader}</b> leads total views this month among all 8 brands.",
-        f"Kotak Neo holds <b>#{kotak_rank}</b> position with {kotak_views} views.",
+        pick_phrase([
+            f"<b>{views_leader}</b> leads total views this month among all 8 brands.",
+            f"<b>{views_leader}</b> tops the views leaderboard for {month}.",
+        ]),
+        pick_phrase([
+            f"Kotak Neo holds <b>#{kotak_rank}</b> position with {kotak_views} views.",
+            f"Kotak Neo sits at <b>#{kotak_rank}</b> this month, with {kotak_views} total views.",
+        ]),
         "Gold connected line shows No. of Posts per brand.",
         "Blue bars represent total recent views.",
     ]
@@ -1059,8 +1258,12 @@ def slide_views_chart(s, page):
         f'<div class="ins"><span class="ins-dot"></span><span>{i}</span></div>'
         for i in insights
     )
-    headline = (f"Kotak Neo ranks #{kotak_rank} in total views — "
-                f"{views_leader} leads with {st[views_leader]['views_fmt']} views")
+    headline = pick_phrase([
+        f"Kotak Neo ranks #{kotak_rank} in total views — "
+        f"{views_leader} leads with {st[views_leader]['views_fmt']} views",
+        f"{views_leader} leads {month}'s views race with {st[views_leader]['views_fmt']} views — "
+        f"Kotak Neo ranks #{kotak_rank}",
+    ])
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -1203,7 +1406,7 @@ def slide_growth(s, page):
 
     def growth_row(bi, brand):
         curr = st[brand]["subscribers"]
-        prev = HIST_SUBS.get(brand, [0])[-1] or 0
+        prev = st[brand]["prev_subs"]
         g    = pct(curr, prev)
         gc   = pct_color(g)
         bg   = "#fff" if bi % 2 == 0 else C["pink"]
@@ -1260,7 +1463,7 @@ tr:nth-child(even) td{{background:#f4f7ff;}}
       </thead>
       <tbody>{rows_html}</tbody>
     </table>
-    <div class="note">*Prev Subs = {HIST_MONTHS[-1]} tracked data &nbsp;|&nbsp; Engagement = Likes + Comments &nbsp;|&nbsp; Data as of {month}</div>
+    <div class="note">*Prev Subs = {prev_month_labels(month[:3] + "-" + month[-2:], 1)[0]} tracked data &nbsp;|&nbsp; Engagement = Likes + Comments &nbsp;|&nbsp; Data as of {month}</div>
   </div>
   {FOOTER_HTML}
   {page_num(page)}
@@ -1534,12 +1737,9 @@ def slide_follower_trend(s, page):
     month = s["month"]
     st    = s["stats"]
 
-    # Use last 9 months of HIST_MONTHS + current for the chart
-    # Use last 8 HIST_MONTHS that actually have data, plus current month
+    # 8 months immediately before curr_m + current — a true sliding window
     curr_m = month[:3] + "-" + month[-2:]
-    # Exclude current month label if it accidentally exists in HIST_MONTHS
-    available = [m for m in HIST_MONTHS if m != curr_m]
-    chart_months = available[-8:]
+    chart_months = prev_month_labels(curr_m, 8)
     all_m  = chart_months + [curr_m]
 
     # Brand colors
@@ -1567,19 +1767,13 @@ def slide_follower_trend(s, page):
 
     # Calculate growth % from baseline for each brand
     # Baseline = first historical month in chart_months
+    baseline_m = prev_month_labels(chart_months[0], 1)[0]
     brand_series = {}
     for brand in BRANDS:
-        hist = HIST_SUBS.get(brand, [])
-        vals = []
-        for m in chart_months:
-            idx = HIST_MONTHS.index(m) if m in HIST_MONTHS else -1
-            v = hist[idx] if 0 <= idx < len(hist) else None
-            vals.append(v)
+        vals = [hist_val(brand, m) for m in chart_months]
         vals.append(st[brand]["subscribers"])
         # Use the value from 1 step before chart_months as baseline for meaningful spread
-        first_chart_idx = HIST_MONTHS.index(chart_months[0]) if chart_months[0] in HIST_MONTHS else -1
-        baseline_idx = first_chart_idx - 1 if first_chart_idx > 0 else first_chart_idx
-        baseline = hist[baseline_idx] if 0 <= baseline_idx < len(hist) else None
+        baseline = hist_val(brand, baseline_m)
         if not baseline:
             baseline = next((v for v in vals if v), None)
         if not baseline:
@@ -1669,14 +1863,13 @@ def slide_follower_trend(s, page):
 
     # Sidebar: current month gain per brand
     kotak_curr = st["Kotak Neo"]["subscribers"]
-    kotak_prev = HIST_SUBS["Kotak Neo"][-1] if HIST_SUBS.get("Kotak Neo") else kotak_curr
+    kotak_prev = st["Kotak Neo"]["prev_subs"] or kotak_curr
     kotak_gain = kotak_curr - kotak_prev
 
     sidebar_rows = ""
     for brand in BRANDS:
         curr = st[brand]["subscribers"]
-        hist = HIST_SUBS.get(brand, [])
-        prev = hist[-1] if hist else curr
+        prev = st[brand]["prev_subs"] or curr
         gain = curr - prev
         color = brand_colors.get(brand, "#888")
         gain_color = "#16a34a" if gain >= 0 else "#dc2626"
@@ -1696,8 +1889,8 @@ def slide_follower_trend(s, page):
           </div>
         </div>"""
 
-    insight_brand = max(BRANDS, key=lambda b: st[b]["subscribers"] - (HIST_SUBS.get(b, [st[b]["subscribers"]])[-1] or st[b]["subscribers"]))
-    insight_gain  = fmt(st[insight_brand]["subscribers"] - (HIST_SUBS.get(insight_brand, [0])[-1] or 0))
+    insight_brand = max(BRANDS, key=lambda b: st[b]["subscribers"] - (st[b]["prev_subs"] or st[b]["subscribers"]))
+    insight_gain  = fmt(st[insight_brand]["subscribers"] - (st[insight_brand]["prev_subs"] or 0))
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -1886,9 +2079,38 @@ def slide_competitor_spotlight(s, page):
     # Top 2 competitors by engagement (excluding Kotak)
     top_competitors = [b for b in r["by_engagement"] if b != "Kotak Neo"][:2]
 
+    def why_rank_high(comp, c_st):
+        # Differentiate the claim by what actually drives this brand's standing:
+        # high post volume vs. high per-video yield vs. subscriber base.
+        eng_per_post = c_st["engagement"] / c_st["posts"] if c_st["posts"] else 0
+        field_avg_eng_per_post = sum(
+            st[b]["engagement"] / st[b]["posts"] for b in BRANDS if st[b]["posts"]
+        ) / max(1, sum(1 for b in BRANDS if st[b]["posts"]))
+        if c_st["posts"] >= 8 and eng_per_post < field_avg_eng_per_post:
+            return pick_phrase([
+                f"{comp} sustains its ranking through sheer content volume — {c_st['posts']} videos "
+                f"in {month}, ahead of the field average.",
+                f"High output rather than per-video standout drives {comp}'s ranking: "
+                f"{c_st['posts']} uploads this month.",
+            ])
+        if eng_per_post >= field_avg_eng_per_post * 1.3:
+            return pick_phrase([
+                f"{comp} punches above its weight — {fmt(round(eng_per_post))} engagement per video, "
+                f"well above the field average, despite {c_st['posts']} uploads.",
+                f"{comp}'s edge is efficiency: each of its {c_st['posts']} videos this month "
+                f"averaged {fmt(round(eng_per_post))} engagement, ahead of the field.",
+            ])
+        return pick_phrase([
+            f"{comp} drives high engagement through consistent posting ({c_st['posts']} videos) "
+            f"generating {c_st['eng_fmt']} total interactions this month.",
+            f"{comp}'s {c_st['posts']} uploads this month generated {c_st['eng_fmt']} in total "
+            f"interactions, keeping it near the top of the rankings.",
+        ])
+
     spotlight_cards = ""
     for comp in top_competitors:
         c_st = st[comp]
+        rank_reason = why_rank_high(comp, c_st)
         spotlight_cards += f"""
         <div style="background:#fff;border-radius:12px;border:1px solid #e8eaf0;
                     padding:14px 16px;display:flex;gap:14px;
@@ -1924,15 +2146,13 @@ def slide_competitor_spotlight(s, page):
                         font-size:11px;color:#333;line-height:1.5;">
               <span style="font-size:10px;font-weight:700;color:#003087;
                            text-transform:uppercase;display:block;margin-bottom:3px;">Why they rank high</span>
-              {comp} drives high engagement through consistent posting ({c_st['posts']} videos)
-              generating {c_st['eng_fmt']} total interactions.
-              Their views-to-engagement ratio reflects strong audience retention.
+              {rank_reason}
             </div>
           </div>
         </div>"""
 
     # Kotak scorecard
-    prev_subs = HIST_SUBS.get("Kotak Neo", [kotak["subscribers"]])[-1] or kotak["subscribers"]
+    prev_subs = kotak["prev_subs"] or kotak["subscribers"]
     sub_g     = pct(kotak["subscribers"], prev_subs)
     sub_gc    = pct_color(sub_g)
 
@@ -2030,25 +2250,13 @@ body{{background:#f7f9fc;}}
 # ═══════════════════════════════════════════════════════════════════════
 def slide_thematic_heatmap(s, page):
     month = s["month"]
-    st    = s["stats"]
-
-    # YouTube theme data for Kotak Neo (from build_summary top3 videos)
-    kotak_videos = s.get("top3_videos", {}).get("Kotak Neo", [])
-
-    # Static theme rows using real aggregate data from stats
-    kotak = st["Kotak Neo"]
-    total_eng  = kotak["engagement"]
-    total_view = kotak["recent_views"]
-    total_post = kotak["posts"]
+    breakdown = s.get("theme_breakdown", {})
 
     # Build heatmap cell helper
     def cell(val, max_val, fmt_val=""):
-        if not val or val == "—":
+        if not val:
             return '<td style="background:#f0f2f5;color:#bbb;border-radius:4px;padding:6px 8px;font-size:11px;text-align:center;">—</td>'
-        try:
-            ratio = int(val) / max_val if max_val else 0
-        except:
-            ratio = 0
+        ratio = val / max_val if max_val else 0
         if ratio > 0.6:
             bg, fc = "#003087", "#fff"
         elif ratio > 0.3:
@@ -2059,64 +2267,48 @@ def slide_thematic_heatmap(s, page):
             bg, fc = "#e8edf5", "#555"
         return f'<td style="background:{bg};color:{fc};border-radius:4px;padding:6px 8px;font-size:11px;text-align:center;font-weight:600;">{fmt_val or val}</td>'
 
-    def neg_cell(text):
-        return f'<td style="background:#fef2f2;color:#dc2626;border-radius:4px;padding:6px 8px;font-size:11px;text-align:center;font-weight:700;">{text}</td>'
+    if not breakdown:
+        rows_html = ('<tr><td colspan="5" style="padding:20px;text-align:center;'
+                     'color:#999;font-size:12px;">No Kotak Neo videos found for '
+                     f'{month} — nothing to classify by theme this period.</td></tr>')
+    else:
+        # Rank themes by views-per-post — the metric that separates "produced a lot
+        # of low-yield content" from "produced content people actually watched."
+        max_posts = max(b["posts"] for b in breakdown.values())
+        max_eng   = max(b["engagement"] for b in breakdown.values())
+        max_views = max(b["views"] for b in breakdown.values())
+        avg_views_per_post = sum(b["views"] for b in breakdown.values()) / sum(b["posts"] for b in breakdown.values())
 
-    # Approximate theme breakdown (derived from total stats)
-    p = total_post
-    e = total_eng
-    v = total_view
-    rows_html = f"""
-    <tr style="background:#f0f5ff;">
-      <td style="padding:7px 10px;font-size:11px;font-weight:600;color:#333;border-bottom:1px solid #f0f2f5;">
-        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;
-               background:#f59e0b;color:#fff;font-size:10px;font-weight:800;
-               text-align:center;line-height:18px;margin-right:4px;">1</span>IPO / Market Updates</td>
-      {cell(int(p*0.22), p, str(int(p*0.22)))}
-      {cell(int(e*0.35), e, fmt(int(e*0.35)))}
-      {cell(int(v*0.38), v, fmt(int(v*0.38), short=True))}
-      <td style="color:#16a34a;font-weight:700;font-size:11px;text-align:center;padding:6px 8px;">🔼 SCALE UP</td>
-    </tr>
-    <tr>
-      <td style="padding:7px 10px;font-size:11px;font-weight:600;color:#333;border-bottom:1px solid #f0f2f5;">
-        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;
-               background:#6366F1;color:#fff;font-size:10px;font-weight:800;
-               text-align:center;line-height:18px;margin-right:4px;">2</span>Financial Education</td>
-      {cell(int(p*0.25), p, str(int(p*0.25)))}
-      {cell(int(e*0.28), e, fmt(int(e*0.28)))}
-      {cell(int(v*0.30), v, fmt(int(v*0.30), short=True))}
-      <td style="color:#16a34a;font-weight:700;font-size:11px;text-align:center;padding:6px 8px;">✅ CONSISTENT</td>
-    </tr>
-    <tr style="background:#f0f5ff;">
-      <td style="padding:7px 10px;font-size:11px;font-weight:600;color:#333;border-bottom:1px solid #f0f2f5;">
-        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;
-               background:#6366F1;color:#fff;font-size:10px;font-weight:800;
-               text-align:center;line-height:18px;margin-right:4px;">3</span>Stock Analysis</td>
-      {cell(int(p*0.18), p, str(int(p*0.18)))}
-      {cell(int(e*0.20), e, fmt(int(e*0.20)))}
-      {cell(int(v*0.18), v, fmt(int(v*0.18), short=True))}
-      <td style="color:#16a34a;font-weight:700;font-size:11px;text-align:center;padding:6px 8px;">✅ STRONG</td>
-    </tr>
-    <tr>
-      <td style="padding:7px 10px;font-size:11px;font-weight:600;color:#555;border-bottom:1px solid #f0f2f5;background:#f9f0f0;">
-        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;
-               background:#dc2626;color:#fff;font-size:10px;font-weight:800;
-               text-align:center;line-height:18px;margin-right:4px;">4</span>Live / Intraday</td>
-      {cell(int(p*0.30), p, str(int(p*0.30)))}
-      {neg_cell(fmt(int(e*0.10)))}
-      {neg_cell(fmt(int(v*0.08), short=True))}
-      <td style="color:#dc2626;font-weight:700;font-size:11px;text-align:center;padding:6px 8px;">⚠️ LOW ROI</td>
-    </tr>
-    <tr style="background:#f0f5ff;">
-      <td style="padding:7px 10px;font-size:11px;font-weight:600;color:#555;border-bottom:1px solid #f0f2f5;">
-        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;
-               background:#dc2626;color:#fff;font-size:10px;font-weight:800;
-               text-align:center;line-height:18px;margin-right:4px;">5</span>Webinar Reposts</td>
-      {cell(int(p*0.05), p, str(int(p*0.05)))}
-      {neg_cell(fmt(int(e*0.07)))}
-      {neg_cell(fmt(int(v*0.06), short=True))}
-      <td style="color:#dc2626;font-weight:700;font-size:11px;text-align:center;padding:6px 8px;">⚠️ REPURPOSE</td>
-    </tr>"""
+        ranked = sorted(breakdown.items(),
+                         key=lambda kv: kv[1]["views"] / kv[1]["posts"] if kv[1]["posts"] else 0,
+                         reverse=True)
+
+        rows_html = ""
+        for i, (theme, b) in enumerate(ranked, 1):
+            vpp = b["views"] / b["posts"] if b["posts"] else 0
+            if vpp >= avg_views_per_post * 1.3:
+                verdict, vcolor = "SCALE UP", "#16a34a"
+            elif vpp >= avg_views_per_post * 0.7:
+                verdict, vcolor = "CONSISTENT", "#16a34a"
+            else:
+                verdict, vcolor = "LOW ROI", "#dc2626"
+            eng_cell = cell(b["engagement"], max_eng, fmt(b["engagement"])) if verdict != "LOW ROI" else \
+                       f'<td style="background:#fef2f2;color:#dc2626;border-radius:4px;padding:6px 8px;font-size:11px;text-align:center;font-weight:700;">{fmt(b["engagement"])}</td>'
+            views_cell = cell(b["views"], max_views, fmt(b["views"], short=True)) if verdict != "LOW ROI" else \
+                       f'<td style="background:#fef2f2;color:#dc2626;border-radius:4px;padding:6px 8px;font-size:11px;text-align:center;font-weight:700;">{fmt(b["views"], short=True)}</td>'
+            row_bg = "#f0f5ff" if i % 2 else "#fff"
+            dot_color = "#f59e0b" if verdict == "SCALE UP" else ("#6366F1" if verdict == "CONSISTENT" else "#dc2626")
+            rows_html += f"""
+            <tr style="background:{row_bg};">
+              <td style="padding:7px 10px;font-size:11px;font-weight:600;color:#333;border-bottom:1px solid #f0f2f5;">
+                <span style="display:inline-block;width:18px;height:18px;border-radius:50%;
+                       background:{dot_color};color:#fff;font-size:10px;font-weight:800;
+                       text-align:center;line-height:18px;margin-right:4px;">{i}</span>{theme}</td>
+              {cell(b["posts"], max_posts, str(b["posts"]))}
+              {eng_cell}
+              {views_cell}
+              <td style="color:{vcolor};font-weight:700;font-size:11px;text-align:center;padding:6px 8px;">{verdict}</td>
+            </tr>"""
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -2179,14 +2371,14 @@ thead th:first-child{{text-align:left;width:220px;}}
         <tr style="background:#e8eaf0;">
           <td colspan="5" style="font-size:10px;font-weight:700;color:#888;
               text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;">
-            ▲ TOP PERFORMERS — Double Down</td>
+            RANKED BY VIEWS PER POST — HIGHEST FIRST</td>
         </tr>
         {rows_html}
       </tbody>
     </table>
     <div style="font-size:11px;color:#888;font-style:italic;margin-top:4px;">
-      *Theme breakdown estimated from total monthly stats.
-      Full per-video thematic data available when master data is generated via create_master_data tool.
+      *Themes classified per-video from Kotak Neo's actual {month} uploads by title keyword.
+      Ranked by views-per-post; full breakdown available via the Master Data export.
     </div>
   </div>
   <div class="ftr">
@@ -2200,10 +2392,124 @@ thead th:first-child{{text-align:left;width:220px;}}
 # ═══════════════════════════════════════════════════════════════════════
 # RENDER: screenshot each slide -> combine -> PDF
 # ═══════════════════════════════════════════════════════════════════════
-import struct, zlib, subprocess, tempfile
+import struct, zlib, subprocess, tempfile, socket, base64, threading, queue, shutil, time
 
-def screenshot_slides(html_slides, png_dir):
-    png_dir.mkdir(exist_ok=True)
+
+class _CDPError(Exception):
+    pass
+
+
+class _WebSocket:
+    """
+    Minimal RFC 6455 WebSocket client — text frames only, just enough to talk to
+    Chrome's DevTools Protocol. Chrome is a trusted local peer here, so this skips
+    what a general-purpose client would need (Sec-WebSocket-Accept verification,
+    ping/pong keepalive, compression extensions).
+    """
+
+    def __init__(self, host, port, path, timeout=10):
+        self.sock = socket.create_connection((host, port), timeout=timeout)
+        self.sock.settimeout(30)
+        key = base64.b64encode(os.urandom(16)).decode()
+        req = (f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+               f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+               f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n")
+        self.sock.sendall(req.encode())
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+        if b" 101 " not in resp.split(b"\r\n", 1)[0]:
+            raise _CDPError(f"WebSocket handshake failed: {resp[:200]!r}")
+
+    def send_text(self, data: str):
+        payload = data.encode()
+        n = len(payload)
+        mask = os.urandom(4)
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        if n <= 125:
+            header = struct.pack("!BB", 0x81, 0x80 | n)
+        elif n <= 65535:
+            header = struct.pack("!BBH", 0x81, 0x80 | 126, n)
+        else:
+            header = struct.pack("!BBQ", 0x81, 0x80 | 127, n)
+        self.sock.sendall(header + mask + masked)
+
+    def recv_text(self) -> str:
+        parts = []
+        while True:
+            opcode, payload, fin = self._recv_frame()
+            if opcode == 0x8:
+                raise _CDPError("WebSocket closed by remote")
+            parts.append(payload)
+            if fin:
+                break
+        return b"".join(parts).decode()
+
+    def _recv_frame(self):
+        b0, b1 = self._recv_exact(2)
+        fin = bool(b0 & 0x80)
+        opcode = b0 & 0x0F
+        masked = bool(b1 & 0x80)
+        length = b1 & 0x7F
+        if length == 126:
+            length = struct.unpack("!H", self._recv_exact(2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", self._recv_exact(8))[0]
+        mask_key = self._recv_exact(4) if masked else b""
+        payload = self._recv_exact(length)
+        if masked:
+            payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+        return opcode, payload, fin
+
+    def _recv_exact(self, n):
+        buf = bytearray()
+        while len(buf) < n:
+            chunk = self.sock.recv(n - len(buf))
+            if not chunk:
+                raise _CDPError("WebSocket connection closed unexpectedly")
+            buf += chunk
+        return bytes(buf)
+
+    def close(self):
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
+
+class _CDPSession:
+    """JSON-command/response session against a single Chrome DevTools page target."""
+
+    def __init__(self, ws_url, timeout=10):
+        # ws_url looks like "ws://127.0.0.1:54321/devtools/page/<id>"
+        rest = ws_url.split("://", 1)[1]
+        hostport, path = rest.split("/", 1)
+        host, port = hostport.split(":")
+        self.ws = _WebSocket(host, int(port), "/" + path, timeout=timeout)
+        self._next_id = 1
+
+    def call(self, method, params=None, timeout=20):
+        msg_id = self._next_id
+        self._next_id += 1
+        self.ws.send_text(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            msg = json.loads(self.ws.recv_text())
+            if msg.get("id") == msg_id:
+                if "error" in msg:
+                    raise _CDPError(f"{method} failed: {msg['error']}")
+                return msg.get("result", {})
+            # else: an event notification unrelated to our command — discard, keep waiting
+        raise _CDPError(f"Timed out waiting for {method} response")
+
+    def close(self):
+        self.ws.close()
+
+
+def _find_chrome():
     chrome_paths = [
         os.environ.get("CHROME_PATH", ""),
         # Windows
@@ -2221,53 +2527,176 @@ def screenshot_slides(html_slides, png_dir):
     chrome = next((p for p in chrome_paths if p and os.path.exists(p)), None)
     if not chrome:
         raise RuntimeError("Chrome/Chromium not found — set CHROME_PATH or install it")
+    return chrome
 
+
+def _launch_chrome_headless(chrome_path, user_data_dir, scale, launch_timeout=20):
+    """
+    Launches Chrome once with its DevTools port left open, instead of the old
+    one-process-per-slide `--screenshot=` flow. `--remote-debugging-port=0` asks
+    Chrome to pick a free port and print it to stderr ("DevTools listening on
+    ws://..."), which we scrape to avoid any fixed-port collision if two report
+    jobs ever ran at once.
+    """
+    cmd = [chrome_path,
+           "--headless=new",
+           "--disable-gpu",
+           "--no-sandbox",
+           "--no-first-run",
+           "--hide-scrollbars",
+           "--disable-extensions",
+           "--disable-background-networking",
+           "--disable-dev-shm-usage",   # Docker's /dev/shm defaults to 64MB — Chrome needs more, this routes around it
+           "--disable-background-timer-throttling",
+           "--disable-renderer-backgrounding",
+           "--disk-cache-size=1",       # no on-disk cache — one-shot render, not worth the memory/IO
+           "--window-size=1280,720",
+           "--remote-debugging-port=0",
+           f"--user-data-dir={user_data_dir}",
+           "about:blank"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                             text=True, bufsize=1)
+
+    # Drain stderr on a background thread (not a blocking readline loop) so this
+    # works identically on Windows and Linux and can't hang past launch_timeout.
+    line_q = queue.Queue()
+    def _drain_stderr():
+        try:
+            for line in proc.stderr:
+                line_q.put(line)
+        except Exception:
+            pass
+    threading.Thread(target=_drain_stderr, daemon=True).start()
+
+    port = None
+    deadline = time.time() + launch_timeout
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"Chrome exited (code {proc.returncode}) before DevTools was ready")
+        try:
+            line = line_q.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if "DevTools listening on ws://" in line:
+            port = line.split("DevTools listening on ws://", 1)[1].split("/", 1)[0].split(":")[1].strip()
+            break
+    if not port:
+        proc.kill()
+        raise RuntimeError("Timed out waiting for Chrome DevTools to become ready")
+
+    # Grab the auto-opened "about:blank" tab's page-level WS URL — page commands
+    # sent directly to it need no Target/session routing, keeping the client simple.
+    page_ws_url = None
+    targets_deadline = time.time() + 10
+    while time.time() < targets_deadline and page_ws_url is None:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
+                targets = json.loads(r.read().decode())
+            for t in targets:
+                if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+                    page_ws_url = t["webSocketDebuggerUrl"]
+                    break
+        except Exception:
+            time.sleep(0.2)
+    if not page_ws_url:
+        proc.kill()
+        raise RuntimeError("Chrome started but no page target was found")
+
+    session = _CDPSession(page_ws_url)
+    session.call("Page.enable")
+    session.call("Runtime.enable")
+    # Equivalent of the old --force-device-scale-factor + --window-size flags,
+    # set once — every slide navigated in this tab renders at this same viewport.
+    session.call("Emulation.setDeviceMetricsOverride",
+                 {"width": 1280, "height": 720, "deviceScaleFactor": scale, "mobile": False})
+    return proc, session
+
+
+def _capture_slide(session, url, load_timeout=20):
+    session.call("Page.navigate", {"url": url}, timeout=10)
+    # Poll instead of listening for Page.loadEventFired — avoids needing to demux
+    # events from command responses on the same socket for a one-shot render.
+    deadline = time.time() + load_timeout
+    ready = False
+    while time.time() < deadline:
+        r = session.call("Runtime.evaluate",
+                          {"expression": "document.readyState", "returnByValue": True}, timeout=5)
+        if r.get("result", {}).get("value") == "complete":
+            ready = True
+            break
+        time.sleep(0.05)
+    if not ready:
+        raise _CDPError("page did not finish loading in time")
+    shot = session.call("Page.captureScreenshot", {"format": "png", "fromSurface": True}, timeout=15)
+    return base64.b64decode(shot["data"])
+
+
+def screenshot_slides(html_slides, png_dir):
+    """
+    Renders every slide through ONE persistent headless Chrome process (driven via
+    its DevTools Protocol over a hand-rolled WebSocket client) instead of the old
+    approach of launching a brand-new Chrome process per slide. Process cold-start
+    (binary load, V8/font/network-stack init) is the expensive part on a
+    CPU-throttled host — this pays that cost once for the whole report instead of
+    once per slide.
+    """
+    png_dir.mkdir(exist_ok=True)
+    chrome = _find_chrome()
+    scale = float(os.environ.get("PDF_REPORT_SCALE", "4"))
+    user_data_dir = tempfile.mkdtemp(prefix="pdf-report-chrome-")
+
+    def _start():
+        return _launch_chrome_headless(chrome, user_data_dir, scale)
+
+    proc, session = _start()
     pngs = []
     total = len(html_slides)
-    for i, html in enumerate(html_slides):
-        _progress("render", f"Rendering slide {i+1}/{total}", 40 + int(45 * i / total))
-        html_file = png_dir.resolve() / f"slide_{i+1:02d}.html"
-        png_file  = png_dir.resolve() / f"slide_{i+1:02d}.png"
-        html_file.write_text(html, encoding="utf-8")
-        if png_file.exists():
-            print(f"  Slide {i+1} already exists, reusing", flush=True)
-            pngs.append(png_file)
-            continue
-        # Use Windows absolute paths for Chrome
-        html_abs = str(html_file).replace("\\", "/")
-        png_abs  = str(png_file)   # keep backslashes for --screenshot flag on Windows
-        url = f"file:///{html_abs}"
-        scale = os.environ.get("PDF_REPORT_SCALE", "4")
-        cmd = [chrome,
-               "--headless=new",
-               "--disable-gpu",
-               "--no-sandbox",
-               "--no-first-run",
-               "--hide-scrollbars",
-               "--disable-extensions",
-               "--disable-background-networking",
-               "--disable-dev-shm-usage",   # Docker's /dev/shm defaults to 64MB — Chrome needs more, this routes around it
-               "--disable-background-timer-throttling",
-               "--disable-renderer-backgrounding",
-               "--disk-cache-size=1",       # no on-disk cache — one-shot render, not worth the memory/IO
-               f"--force-device-scale-factor={scale}",
-               "--window-size=1280,720",
-               f"--screenshot={png_abs}",
-               url]
-        result = subprocess.run(cmd, capture_output=True, timeout=90)
-        if png_file.exists() and png_file.stat().st_size > 1000:
-            print(f"  Slide {i+1}/{len(html_slides)} -> {png_file.name} "
-                  f"({png_file.stat().st_size//1024} KB)", flush=True)
-            pngs.append(png_file)
-        else:
-            # Try once more with a small delay
-            import time; time.sleep(1)
-            if png_file.exists() and png_file.stat().st_size > 1000:
-                print(f"  Slide {i+1}/{len(html_slides)} -> {png_file.name} (retry ok)", flush=True)
+    try:
+        for i, html in enumerate(html_slides):
+            _progress("render", f"Rendering slide {i+1}/{total}", 40 + int(45 * i / total))
+            html_file = png_dir.resolve() / f"slide_{i+1:02d}.html"
+            png_file  = png_dir.resolve() / f"slide_{i+1:02d}.png"
+            html_file.write_text(html, encoding="utf-8")
+            url = "file:///" + str(html_file).replace("\\", "/")
+
+            png_bytes = None
+            for attempt in range(2):
+                try:
+                    png_bytes = _capture_slide(session, url)
+                    break
+                except Exception as e:
+                    print(f"  Slide {i+1} capture failed (attempt {attempt+1}): {e}", flush=True)
+                    try:
+                        session.close(); proc.kill(); proc.wait(timeout=5)
+                    except Exception:
+                        pass
+                    time.sleep(1)
+                    try:
+                        proc, session = _start()
+                    except Exception as relaunch_err:
+                        print(f"  Chrome relaunch failed: {relaunch_err}", flush=True)
+
+            if png_bytes and len(png_bytes) > 1000:
+                png_file.write_bytes(png_bytes)
+                print(f"  Slide {i+1}/{total} -> {png_file.name} ({len(png_bytes)//1024} KB)", flush=True)
                 pngs.append(png_file)
             else:
-                stderr = result.stderr.decode(errors="replace")[:200] if result.stderr else ""
-                print(f"  Slide {i+1} FAILED (code {result.returncode}) {stderr}")
+                print(f"  Slide {i+1} FAILED after retries", flush=True)
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        shutil.rmtree(user_data_dir, ignore_errors=True)
+
     return pngs
 
 def read_png(path):
@@ -2484,24 +2913,35 @@ def build_pdf_report(month=None):
         print("ERROR: Set YOUTUBE_API_KEY first"); sys.exit(1)
 
     if month:
-        month_label = month
+        # Whole calendar month, e.g. "July 2026".
         target = datetime.strptime(month, "%B %Y")
+        start_date = target.strftime("%Y-%m-01")
+        last_day = (datetime(target.year + (target.month == 12), (target.month % 12) + 1, 1) - timedelta(days=1))
+        end_date = last_day.strftime("%Y-%m-%d")
+        month_label = month
     else:
+        # Default: last full calendar month.
         now = datetime.now()
         m = now.month-1 if now.month > 1 else 12
         y = now.year if now.month > 1 else now.year-1
         target = datetime(y, m, 1)
+        start_date = target.strftime("%Y-%m-01")
+        last_day = (datetime(y + (m == 12), (m % 12) + 1, 1) - timedelta(days=1))
+        end_date = last_day.strftime("%Y-%m-%d")
         month_label = target.strftime("%B %Y")
 
     print(f"\n{'='*60}")
     print(f"  YouTube PDF Report v2 — {month_label}")
+    print(f"  Range: {start_date} to {end_date}")
     print(f"  Engine: Python + Chrome headless")
     print(f"{'='*60}\n")
 
-    # Step 1: fetch data — only videos actually published in the target month
+    # Step 1: fetch data — only videos actually published in the target range
     print(f"Step 1: Fetching YouTube data for {month_label}...")
     _progress("fetch", f"Fetching YouTube data for {month_label}...", 2)
-    stats, videos = fetch_all_youtube_data(target.year, target.month)
+    stats, videos = fetch_all_youtube_data(start_date, end_date)
+    curr_m = month_label[:3] + "-" + month_label[-2:]
+    save_subscriber_snapshot(curr_m, {b: stats[b]["subscribers"] for b in BRANDS})
     summary = build_summary(stats, videos, month_label)
 
     # Step 2: build all slides in Python (no API calls for data slides)
@@ -2553,8 +2993,10 @@ def build_pdf_report(month=None):
 
     # Step 3: screenshot each slide — fresh folder every run, never reuse old PNGs
     from datetime import datetime as _dt
-    run_ts   = _dt.now().strftime("%Y%m%d_%H%M%S")
-    debug_dir = Path(f"pdf_slides_{month_label.replace(' ','_')}_{run_ts}")
+    import re as _re
+    run_ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+    slug = _re.sub(r"[^A-Za-z0-9]+", "_", month_label).strip("_")
+    debug_dir = Path(f"pdf_slides_{slug}_{run_ts}")
     print(f"\nStep 3: Screenshotting slides with Chrome...")
     pngs = screenshot_slides(slides, debug_dir)
 
@@ -2567,7 +3009,7 @@ def build_pdf_report(month=None):
     out_dir_env = os.environ.get("PDF_REPORT_OUTPUT_DIR")
     out_dir = Path(out_dir_env) if out_dir_env else (Path.home() / "Downloads")
     out_dir.mkdir(parents=True, exist_ok=True)
-    output = str(out_dir / f"Kotak_Neo_YouTube_Report_{month_label.replace(' ', '_')}_{run_ts}.pdf")
+    output = str(out_dir / f"Kotak_Neo_YouTube_Report_{slug}_{run_ts}.pdf")
     write_pdf(sorted(pngs), output, page_links)
 
     # Auto-delete the temp slides folder now that PDF is saved

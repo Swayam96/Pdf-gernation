@@ -3,14 +3,25 @@ Standalone HTTP API for the PDF Report dashboard.
 No third-party deps — uses only Python stdlib (http.server, json, threading, uuid).
 
 Endpoints:
-  POST /api/pdf-report        { month: string }   -> { job_id }
-  GET  /api/jobs/:id                               -> poll job status + progress
-  GET  /api/reports/:filename                      -> download a finished PDF
-  GET  /                                            -> serves dashboard.html
+  POST /api/pdf-report                { month: string }                              -> { job_id }
+  POST /api/export/youtube            { months?: number }                            -> { job_id }
+  POST /api/master-data               { brand: string, month: string }                -> { job_id }
+  POST /api/master-data/all           { month: string }                               -> { job_id }
+  GET  /api/jobs/:id                                          -> poll job status + progress
+  GET  /api/brands                                            -> list of tracked brand names
+  GET  /api/reports                                           -> list generated PDF reports
+  GET  /api/reports/:filename                                 -> download a finished PDF
+  GET  /api/master-data/list                                  -> list cached master data files
+  GET  /api/master-data/download/:filename                    -> download a master data .xlsx
+  GET  /api/export/youtube/list                                -> list generated export .xlsx files
+  GET  /api/export/youtube/download/:filename                  -> download an export .xlsx
+  GET  /                                                       -> serves dashboard.html
 
-Runs pdf_report_generator.py as a subprocess per job. The PDF is written to
-./generated_reports/ (not the user's Downloads folder, and not auto-opened)
-so the dashboard can offer it as an explicit download.
+PDF reports run pdf_report_generator.py as a subprocess per job. Master data and
+export-sheet jobs run in-process (master_data.py / export_sheet.py) since they're
+pure Python-stdlib data fetch + .xlsx write, with no headless-Chrome step needed.
+All generated files are written locally (no Google auth anywhere) and served back
+as explicit downloads.
 """
 
 import http.server
@@ -45,6 +56,18 @@ REPORTS_DIR = os.path.join(ROOT, "generated_reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 
+def _validate_month(month: str):
+    """Return an error string if `month` ('Month YYYY') is malformed or in the future, else None."""
+    try:
+        requested = datetime.strptime(month, "%B %Y")
+    except ValueError:
+        return "month must be in 'Month YYYY' format, e.g. 'September 2026'"
+    now = datetime.now()
+    if (requested.year, requested.month) > (now.year, now.month):
+        return f"{month} hasn't happened yet — data isn't available"
+    return None
+
+
 def _new_job(kind: str, params: dict) -> str:
     job_id = str(uuid.uuid4())
     with _jobs_lock:
@@ -64,7 +87,7 @@ def _run_job(job_id: str) -> None:
         with _jobs_lock:
             job["status"] = "done"
             job["result"] = result
-            job["progress"] = {"stage": "done", "label": "PDF ready", "pct": 100}
+            job["progress"] = {"stage": "done", "label": "Done", "pct": 100}
     except Exception as exc:
         with _jobs_lock:
             job["status"] = "error"
@@ -80,6 +103,24 @@ def _set_progress(job_id: str, progress: dict) -> None:
 
 
 def _dispatch(job_id: str, kind: str, params: dict):
+    if kind == "master_data":
+        import master_data
+        return master_data.create_master_data_for_brand(
+            params["brand"], params["month"],
+            progress_cb=lambda p: _set_progress(job_id, p))
+
+    if kind == "master_data_all":
+        import master_data
+        return master_data.create_master_data_all_brands(
+            params["month"],
+            progress_cb=lambda p: _set_progress(job_id, p))
+
+    if kind == "export_sheet":
+        import export_sheet
+        return export_sheet.build_export_workbook(
+            int(params.get("months", 6)),
+            progress_cb=lambda p: _set_progress(job_id, p))
+
     if kind == "pdf_report":
         import subprocess
         script = os.path.join(ROOT, "pdf_report_generator.py")
@@ -226,7 +267,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
             return
 
+        if path == "/api/brands":
+            from pdf_report_generator import BRANDS
+            self._send(200, {"brands": BRANDS})
+            return
+
+        if path == "/api/master-data/list":
+            import master_data
+            self._send(200, {"files": master_data.list_master_data()})
+            return
+
+        if path.startswith("/api/master-data/download/"):
+            import master_data
+            self._serve_xlsx(path[len("/api/master-data/download/"):], master_data.MASTER_DATA_XLSX_DIR)
+            return
+
+        if path == "/api/export/youtube/list":
+            import export_sheet
+            self._send(200, {"files": export_sheet.list_export_files()})
+            return
+
+        if path.startswith("/api/export/youtube/download/"):
+            import export_sheet
+            self._serve_xlsx(path[len("/api/export/youtube/download/"):], export_sheet.EXPORT_XLSX_DIR)
+            return
+
         self._send(404, {"error": "Not found"})
+
+    def _serve_xlsx(self, filename: str, base_dir: str) -> None:
+        if not filename or "/" in filename or "\\" in filename or filename in (".", ".."):
+            self._send(400, {"error": "Invalid filename"})
+            return
+        file_path = os.path.join(base_dir, filename)
+        if not os.path.abspath(file_path).startswith(os.path.abspath(base_dir) + os.sep) \
+           or not os.path.isfile(file_path):
+            self._send(404, {"error": "File not found"})
+            return
+        size = os.path.getsize(file_path)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
 
     def do_POST(self):
         path = urlparse(self.path).path.rstrip("/")
@@ -241,16 +330,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not month:
                 self._send(400, {"error": "month is required"})
                 return
-            try:
-                requested = datetime.strptime(month, "%B %Y")
-            except ValueError:
-                self._send(400, {"error": "month must be in 'Month YYYY' format, e.g. 'September 2026'"})
+            err = _validate_month(month)
+            if err:
+                self._send(400, {"error": err})
                 return
-            now = datetime.now()
-            if (requested.year, requested.month) > (now.year, now.month):
-                self._send(400, {"error": f"{month} hasn't happened yet — data isn't available"})
-                return
+
             job_id = _start_job("pdf_report", body)
+            self._send(202, {"job_id": job_id, "status": "pending"})
+            return
+
+        if path == "/api/export/youtube":
+            months = int(body.get("months", 6))
+            if not (1 <= months <= 24):
+                self._send(400, {"error": "months must be between 1 and 24"})
+                return
+            job_id = _start_job("export_sheet", {"months": months})
+            self._send(202, {"job_id": job_id, "status": "pending"})
+            return
+
+        if path == "/api/master-data":
+            brand, month = body.get("brand"), body.get("month")
+            if not brand or not month:
+                self._send(400, {"error": "brand and month are required"})
+                return
+            err = _validate_month(month)
+            if err:
+                self._send(400, {"error": err})
+                return
+            job_id = _start_job("master_data", body)
+            self._send(202, {"job_id": job_id, "status": "pending"})
+            return
+
+        if path == "/api/master-data/all":
+            month = body.get("month")
+            if not month:
+                self._send(400, {"error": "month is required"})
+                return
+            err = _validate_month(month)
+            if err:
+                self._send(400, {"error": err})
+                return
+            job_id = _start_job("master_data_all", body)
             self._send(202, {"job_id": job_id, "status": "pending"})
             return
 
