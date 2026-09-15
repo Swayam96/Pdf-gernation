@@ -447,7 +447,7 @@ def build_summary(stats, videos, month_label):
             "subs_fmt":      fmt(stats[b]["subscribers"], short=True),
             "prev_subs":     prev_subs_est[b][0] or 0,
             "prev_subs_estimated": prev_subs_est[b][1],
-            "prev_subs_fmt": fmt(prev_subs_est[b][0], short=True),
+            "prev_subs_fmt": ("~" if prev_subs_est[b][1] else "") + fmt(prev_subs_est[b][0], short=True),
             "sub_growth":    pct(stats[b]["subscribers"], prev_subs_est[b][0]),
             "engagement":    stats[b]["engagement"],
             "eng_fmt":       fmt(stats[b]["engagement"]),
@@ -617,13 +617,6 @@ body{{background:#003570;}}
   <div class="right-panel">
     <div class="right-label">Brands Analysed</div>
     <div class="brand-grid">{brand_chips}</div>
-    <div style="margin-top:40px;padding-top:30px;border-top:1px solid rgba(255,255,255,0.1);width:100%;">
-      <div style="font-size:11px;color:rgba(255,255,255,0.4);line-height:1.8;">
-        Data Source: YouTube Data API v3<br>
-        Engagement = Likes + Comments<br>
-        Prepared by Kotak Securities Social Intelligence
-      </div>
-    </div>
   </div>
   {FOOTER_HTML}
   {page_num(1)}
@@ -708,21 +701,24 @@ def slide_findings(s, page):
         ("Kotak Neo's top content theme", theme_line),
     ]
 
-    icons = ["📊","📈","🏆","⚠️","🎯"]
+    accent_colors = [C['blue'], C['red'], "#1F6B2E", "#7C3D1A", C['purple']]
     obs_html = ""
     for idx, (heading, body) in enumerate(observations):
-        icon = icons[idx % len(icons)]
+        accent = accent_colors[idx % len(accent_colors)]
         is_last = (idx == len(observations) - 1)
         span = 'grid-column:1/3;' if is_last else ''
+        num_badge = (f'<div style="min-width:22px;height:22px;border-radius:6px;background:{accent};'
+                     f'display:flex;align-items:center;justify-content:center;'
+                     f'font-size:11px;font-weight:800;color:#fff;flex-shrink:0;">{idx+1}</div>')
         obs_html += f"""
         <div style="background:#F7FAFF;border-radius:10px;padding:16px 18px;
-                    border-top:3px solid {C['blue']};{span}">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">
-            <span style="font-size:15px;">{icon}</span>
-            <span style="font-size:14px;font-weight:700;color:{C['blue']};
-                         letter-spacing:0.2px;">{heading}</span>
+                    border-top:3px solid {accent};{span}display:flex;flex-direction:column;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            {num_badge}
+            <span style="font-size:13.5px;font-weight:700;color:{accent};
+                         letter-spacing:0.2px;line-height:1.3;">{heading}</span>
           </div>
-          <div style="font-size:13.5px;color:#334;line-height:1.65;">{body}</div>
+          <div style="font-size:13px;color:#334;line-height:1.7;flex:1;">{body}</div>
         </div>"""
 
     return f"""<!DOCTYPE html>
@@ -732,8 +728,8 @@ def slide_findings(s, page):
 .slide{{background:#fafbff;}}
 .accent-bar{{position:absolute;left:0;top:0;width:5px;height:100%;
              background:linear-gradient(180deg,#DC143C,#004B91);}}
-.main{{padding:28px 44px 48px 54px;height:720px;display:flex;flex-direction:column;}}
-.obs-grid{{display:grid;grid-template-columns:1fr 1fr;gap:14px;flex:1;margin-top:14px;}}
+.main{{padding:26px 44px 46px 54px;height:720px;display:flex;flex-direction:column;}}
+.obs-grid{{display:grid;grid-template-columns:1fr 1fr;gap:12px;flex:1;margin-top:12px;}}
 </style>
 </head>
 <body>
@@ -743,8 +739,8 @@ def slide_findings(s, page):
     <div class="slide-tag">Findings &amp; Suggestions</div>
     <div class="slide-title">{finding_title}</div>
     <div class="hline"></div>
-    <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;
-                letter-spacing:1.5px;margin-top:12px;">Key Observations — {month}</div>
+    <div style="font-size:11px;font-weight:700;color:#888;text-transform:uppercase;
+                letter-spacing:1.5px;margin-top:10px;">Key Observations — {month}</div>
     <div class="obs-grid">{obs_html}</div>
   </div>
   {FOOTER_HTML}
@@ -775,33 +771,38 @@ def slide_summary(s, page):
     fastest_grower = growth_ranked[0] if growth_ranked else subs_leader
     fastest_growth_pct = st[fastest_grower]["sub_growth"] if growth_ranked else ""
 
+    # Compute views-per-post leader for an extra insight
+    vpp_leader = max(BRANDS, key=lambda b: st[b]["recent_views"] / st[b]["posts"] if st[b]["posts"] else 0)
+    vpp_val    = fmt(st[vpp_leader]["recent_views"] // st[vpp_leader]["posts"] if st[vpp_leader]["posts"] else 0, short=True)
+    epp_leader = max(BRANDS, key=lambda b: st[b]["engagement"] / st[b]["posts"] if st[b]["posts"] else 0)
+    epp_val    = fmt(round(st[epp_leader]["engagement"] / st[epp_leader]["posts"]) if st[epp_leader]["posts"] else 0)
+
     bullets = [
-        f"On YouTube, the best-performing brands in total engagement were "
-        f"<b>{top3_eng[0]}</b>, <b>{top3_eng[1]}</b>, and <b>{top3_eng[2]}</b>.",
-        f"Kotak Neo ranks <b>#{k['engagement']}</b> in total engagement and "
-        f"<b>#{k['views']}</b> in total views among all 8 brands.",
-        f"<b>{views_leader}</b> leads total views with {st[views_leader]['views_fmt']} views across recent videos.",
-        f"<b>{eng_leader}</b> leads total engagement with {st[eng_leader]['eng_fmt']} (Likes + Comments).",
-        f"Kotak Neo posted <b>{kotak['posts']}</b> videos generating "
-        f"<b>{kotak['views_fmt']}</b> views and <b>{kotak['eng_fmt']}</b> engagements in {month}.",
-        f"<b>{subs_leader}</b> has the largest subscriber base at {st[subs_leader]['subs_fmt']} subscribers.",
-        (f"<b>{fastest_grower}</b> posted the fastest subscriber growth this month at {fastest_growth_pct}."
-         if growth_ranked else "No brand-over-brand subscriber growth data is available for this month."),
-        "Engagement = Likes + Comments across all YouTube channels "
-        "(Shares not available via public API).",
+        (C["blue"],  f"Top 3 by engagement: <b>{top3_eng[0]}</b>, <b>{top3_eng[1]}</b>, <b>{top3_eng[2]}</b>."),
+        (C["red"],   f"Kotak Neo ranks <b>#{k['engagement']}</b> in engagement and <b>#{k['views']}</b> in views."),
+        ("#1F6B2E", f"<b>{views_leader}</b> leads views — {st[views_leader]['views_fmt']} total."),
+        ("#7C3D1A", f"<b>{eng_leader}</b> leads engagement — {st[eng_leader]['eng_fmt']} (Likes + Comments)."),
+        (C["blue"],  f"Kotak Neo: <b>{kotak['posts']}</b> posts · <b>{kotak['views_fmt']}</b> views · <b>{kotak['eng_fmt']}</b> engagement in {month}."),
+        (C["red"],   f"<b>{subs_leader}</b> has the largest subscriber base at {st[subs_leader]['subs_fmt']}."),
+        ("#1F6B2E", (f"<b>{fastest_grower}</b> grew fastest this month at {fastest_growth_pct}."
+                     if growth_ranked else "No subscriber growth data available for this month.")),
+        ("#7C3D1A", f"<b>{vpp_leader}</b> leads views-per-post at {vpp_val}/video · <b>{epp_leader}</b> leads engagement-per-post at {epp_val}."),
+        (C["purple"], "Engagement = Likes + Comments (Shares removed from YouTube public API in 2015)."),
     ]
 
-    items_html = "".join(
-        f'''<div style="display:flex;align-items:flex-start;gap:12px;
-                        padding:10px 14px;border-radius:7px;
-                        background:{"#F0F5FF" if i%2==0 else "#fff"};
-                        border-left:3px solid {C["blue"] if i%2==0 else C["red"]};">
-              <div style="min-width:7px;height:7px;background:{C["red"] if i%2==0 else C["blue"]};
-                           border-radius:50%;margin-top:6px;flex-shrink:0;"></div>
-              <span style="font-size:15px;color:#1a1a2e;line-height:1.65;">{b}</span>
-            </div>'''
-        for i, b in enumerate(bullets)
-    )
+    # 2-column grid — last item spans full width if odd count
+    items_html = ""
+    for i, (accent, txt) in enumerate(bullets):
+        is_last_odd = (i == len(bullets) - 1) and (len(bullets) % 2 == 1)
+        span = 'grid-column:1/3;' if is_last_odd else ''
+        items_html += f'''
+        <div style="display:flex;align-items:flex-start;gap:10px;
+                    padding:9px 13px;border-radius:7px;background:#F7FAFF;
+                    border-left:3px solid {accent};{span}">
+          <div style="min-width:6px;height:6px;background:{accent};
+                      border-radius:50%;margin-top:7px;flex-shrink:0;"></div>
+          <span style="font-size:13.5px;color:#1a1a2e;line-height:1.6;">{txt}</span>
+        </div>'''
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -810,8 +811,9 @@ def slide_summary(s, page):
 .slide{{background:#fafbff;}}
 .accent-bar{{position:absolute;left:0;top:0;width:5px;height:100%;
              background:linear-gradient(180deg,#004B91,#DC143C);}}
-.main{{padding:28px 44px 48px 54px;height:720px;display:flex;flex-direction:column;}}
-.bullets-wrap{{margin-top:14px;flex:1;display:flex;flex-direction:column;gap:6px;}}
+.main{{padding:26px 44px 46px 54px;height:720px;display:flex;flex-direction:column;}}
+.bullets-wrap{{margin-top:12px;flex:1;display:grid;grid-template-columns:1fr 1fr;
+               gap:8px;}}
 </style>
 </head>
 <body>
@@ -846,8 +848,9 @@ def slide_followers_mom(s, page):
         for m in all_m
     )
 
-    # Build data rows
-    any_estimated = False
+    # Build data rows — track how many historical cells are estimated vs real
+    est_count = 0
+    total_hist_cells = len(BRANDS) * len(last6)
     rows_html = ""
     for bi, brand in enumerate(BRANDS):
         prev, _ = hist_val_est(brand, seed_m)
@@ -858,7 +861,8 @@ def slide_followers_mom(s, page):
             else:
                 val, is_est = hist_val_est(brand, m)
             if val:
-                any_estimated = any_estimated or is_est
+                if is_est:
+                    est_count += 1
                 p_str = pct(val, prev) if prev else ""
                 pc    = pct_color(p_str)
                 cls   = "curr-col" if m == curr_m else ""
@@ -882,8 +886,15 @@ def slide_followers_mom(s, page):
         f"{month} subscriber snapshot — {fastest_brand} led growth among the 8 tracked brands. "
         f"% columns show month-over-month change.",
     ])
-    if any_estimated:
+    mostly_estimated = total_hist_cells > 0 and (est_count / total_hist_cells) > 0.5
+    if est_count > 0:
         note += " ~ marks a month with no live snapshot on record, estimated from surrounding data."
+    est_banner = ""
+    if mostly_estimated:
+        est_banner = (f'<div style="background:#fff8e1;border:1px solid #f59e0b;border-radius:6px;'
+                      f'padding:6px 12px;font-size:11px;color:#92400e;margin-bottom:6px;">'
+                      f'⚠ Most historical columns are interpolated estimates (~) — '
+                      f'run reports monthly to build a real snapshot history.</div>')
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -915,6 +926,7 @@ tr:nth-child(even) td.curr-col{{background:#dce8ff!important;}}
     <div class="slide-tag">Month-on-Month</div>
     <div class="slide-title">Followers M-O-M Comparison</div>
     <div class="hline"></div>
+    {est_banner}
     <table>
       <thead><tr>{header_cells}</tr></thead>
       <tbody>{rows_html}</tbody>
@@ -1059,13 +1071,20 @@ def slide_key_metrics(s, page):
     month = s["month"]
     st    = s["stats"]
 
+    def _vpp(b):
+        return fmt(st[b]["recent_views"] // st[b]["posts"], short=True) if st[b]["posts"] else "-"
+    def _epp(b):
+        return fmt(round(st[b]["engagement"] / st[b]["posts"])) if st[b]["posts"] else "-"
+
     metrics = [
-        ("Followers",        [st[b]["subs_fmt"]      for b in BRANDS]),
-        ("Prev Month Subs",  [st[b]["prev_subs_fmt"]  for b in BRANDS]),
-        ("Change in Followers", [st[b]["sub_growth"]  for b in BRANDS]),
-        ("No. of Posts",     [str(st[b]["posts"])     for b in BRANDS]),
-        ("Total Views",      [st[b]["views_fmt"]      for b in BRANDS]),
-        ("Total Engagement", [st[b]["eng_fmt"]        for b in BRANDS]),
+        ("Followers",           [st[b]["subs_fmt"]      for b in BRANDS]),
+        ("Prev Month Subs",     [st[b]["prev_subs_fmt"]  for b in BRANDS]),
+        ("Change in Followers", [st[b]["sub_growth"]    for b in BRANDS]),
+        ("No. of Posts",        [str(st[b]["posts"])    for b in BRANDS]),
+        ("Total Views",         [st[b]["views_fmt"]     for b in BRANDS]),
+        ("Total Engagement",    [st[b]["eng_fmt"]       for b in BRANDS]),
+        ("Views / Post",        [_vpp(b)                for b in BRANDS]),
+        ("Engagement / Post",   [_epp(b)                for b in BRANDS]),
     ]
 
     header_html = '<th class="metric-col">Metrics</th>' + "".join(
@@ -1074,20 +1093,45 @@ def slide_key_metrics(s, page):
         for b in BRANDS
     )
 
+    # For numeric rows, find the brand index with the best value so we can highlight it
+    NUMERIC_ROWS = {"Followers", "No. of Posts", "Total Views", "Total Engagement", "Views / Post", "Engagement / Post"}
+
+    def _best_idx(label, vals):
+        if label not in NUMERIC_ROWS:
+            return -1
+        def _parse(v):
+            if v in ("-", "N/A"): return -1
+            cleaned = v.replace("~","").replace(",","").replace("K","000").replace("L","00000").replace("Cr","0000000")
+            try: return float(cleaned)
+            except: return -1
+        parsed = [_parse(v) for v in vals]
+        best = max(parsed)
+        return parsed.index(best) if best > 0 else -1
+
     rows_html = ""
     for ri, (label, vals) in enumerate(metrics):
         bg = C["pink"] if ri % 2 == 0 else "#fff"
+        best_bi = _best_idx(label, vals)
         cells = f'<td class="metric-label">{label}</td>'
         for bi, (b, v) in enumerate(zip(BRANDS, vals)):
             is_k = (b == "Kotak Neo")
-            style = "background:#E8F0FA;" if is_k else f"background:{bg};"
+            is_best = (bi == best_bi)
+            if is_best and not is_k:
+                style = "background:#FFF8DC;font-weight:800;"
+            elif is_k:
+                style = "background:#E8F0FA;"
+            else:
+                style = f"background:{bg};"
             if label == "Change in Followers":
                 style += f"color:{pct_color(str(v))};"
-            cells += f'<td style="{style}">{v}</td>'
+            trophy = ' <span style="font-size:9px;">🥇</span>' if is_best and not is_k else ""
+            cells += f'<td style="{style}">{v}{trophy}</td>'
         rows_html += f'<tr>{cells}</tr>'
 
+    any_est = any(st[b]["prev_subs_estimated"] for b in BRANDS)
     note = (f"*Engagement = Likes + Comments  |  Data as of {month}  |  "
-            "Indicative of leader in a metric — may change each month")
+            "Indicative of leader in a metric — may change each month"
+            + ("  |  ~ = estimated/interpolated (no snapshot on record for that month)" if any_est else ""))
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -1096,13 +1140,14 @@ def slide_key_metrics(s, page):
 .slide{{background:#fafbff;}}
 .accent-bar{{position:absolute;left:0;top:0;width:5px;height:100%;background:#FFC200;}}
 .main{{padding:22px 24px 46px 30px;display:flex;flex-direction:column;}}
-table{{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:10px;}}
+.tbl-wrap{{flex:1;display:flex;flex-direction:column;margin-top:10px;}}
+table{{width:100%;border-collapse:collapse;table-layout:fixed;flex:1;height:100%;}}
 th{{background:#FFC200;color:#111;font-weight:700;padding:11px 4px;
     text-align:center;font-size:12.5px;border:1px solid #d4a900;}}
 th.metric-col{{text-align:left;padding-left:12px;width:148px;}}
 th.kotak-col{{background:#004B91;color:#fff;border-color:#003570;}}
-td{{padding:9px 4px;text-align:center;border:1px solid #e4e8f0;font-size:13px;
-    color:#1a1a2e;font-weight:600;vertical-align:middle;}}
+td{{padding:0 4px;text-align:center;border:1px solid #e4e8f0;font-size:13px;
+    color:#1a1a2e;font-weight:600;vertical-align:middle;height:56px;}}
 td.metric-label{{text-align:left;padding-left:12px;font-weight:700;width:148px;font-size:13px;}}
 tr:nth-child(even) td{{background:#f5f8ff;}}
 tr:nth-child(even) td.metric-label{{background:#f5f8ff;}}
@@ -1115,10 +1160,12 @@ tr:nth-child(even) td.metric-label{{background:#f5f8ff;}}
     <div class="slide-tag">Performance Overview</div>
     <div class="slide-title">YouTube — Key Metrics</div>
     <div class="hline"></div>
-    <table>
-      <thead><tr>{header_html}</tr></thead>
-      <tbody>{rows_html}</tbody>
-    </table>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>{header_html}</tr></thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+    </div>
     <div class="note">{note}</div>
   </div>
   {FOOTER_HTML}
@@ -1320,8 +1367,8 @@ def slide_top3_posts(s, brand, page):
         try: return int(x)
         except: return 0
 
-    engagement_sorted = sorted(videos[:5], key=lambda v: _int(v.get("likes",0))+_int(v.get("comments",0)), reverse=True)
-    top3 = engagement_sorted[:3]
+    # top3_videos was already sorted by views descending in build_summary — take the top 3 directly
+    top3 = videos[:3]
 
     urls = []
     cards_html = ""
@@ -1404,21 +1451,44 @@ def slide_growth(s, page):
     month  = s["month"]
     st     = s["stats"]
 
+    # Pre-compute leaders for highlighting
+    leader_subs  = max(BRANDS, key=lambda b: st[b]["subscribers"])
+    leader_posts = max(BRANDS, key=lambda b: st[b]["posts"])
+    leader_views = max(BRANDS, key=lambda b: st[b]["recent_views"])
+    leader_eng   = max(BRANDS, key=lambda b: st[b]["engagement"])
+    growth_brands = [b for b in BRANDS if st[b]["prev_subs"]]
+    leader_growth = max(growth_brands,
+        key=lambda b: (st[b]["subscribers"] - st[b]["prev_subs"]) / st[b]["prev_subs"]
+    ) if growth_brands else None
+
+    GOLD_BG = "background:#FFF8DC;font-weight:800;"
+
     def growth_row(bi, brand):
         curr = st[brand]["subscribers"]
-        prev = st[brand]["prev_subs"]
-        g    = pct(curr, prev)
-        gc   = pct_color(g)
+        prev = st[brand]["prev_subs"] or None
         bg   = "#fff" if bi % 2 == 0 else C["pink"]
         bold = "font-weight:700;" if brand == "Kotak Neo" else ""
+        if prev:
+            g  = pct(curr, prev)
+            gc = pct_color(g)
+            prev_cell_val = fmt(prev, short=True)
+            g_style = (GOLD_BG + f"color:{gc};") if brand == leader_growth else f"color:{gc};font-weight:600;"
+            g_cell = f'<td style="{g_style}">{g}</td>'
+        else:
+            prev_cell_val = '<span style="color:#bbb;font-style:italic;">N/A</span>'
+            g_cell = '<td style="color:#bbb;font-style:italic;">N/A</td>'
+        subs_style  = GOLD_BG if brand == leader_subs  else ""
+        posts_style = GOLD_BG if brand == leader_posts else ""
+        views_style = GOLD_BG if brand == leader_views else ""
+        eng_style   = GOLD_BG if brand == leader_eng   else ""
         return (f'<tr style="background:{bg}">'
                 f'<td class="brand-td" style="{bold}">{brand}</td>'
-                f'<td>{fmt(prev, short=True)}</td>'
-                f'<td>{fmt(curr, short=True)}</td>'
-                f'<td style="color:{gc};font-weight:600;">{g}</td>'
-                f'<td>{st[brand]["posts"]}</td>'
-                f'<td>{st[brand]["views_fmt"]}</td>'
-                f'<td>{st[brand]["eng_fmt"]}</td>'
+                f'<td>{prev_cell_val}</td>'
+                f'<td style="{subs_style}">{fmt(curr, short=True)}</td>'
+                f'{g_cell}'
+                f'<td style="{posts_style}">{st[brand]["posts"]}</td>'
+                f'<td style="{views_style}">{st[brand]["views_fmt"]}</td>'
+                f'<td style="{eng_style}">{st[brand]["eng_fmt"]}</td>'
                 f'</tr>')
 
     rows_html = ""
@@ -1479,12 +1549,12 @@ def slide_methodology(s, page):
     points = [
         "YouTube data fetched live via YouTube Data API v3 using uploads playlist enumeration (1 quota unit/page).",
         "Subscriber counts: current value from API for latest month; historical data (Oct-24 to Jun-26) from tracked records.",
-        "Views and Engagement aggregated from recent videos (up to 15 per channel) fetched each run.",
-        "For high-volume channels, up to 15 videos per channel fetched to ensure reasonable coverage.",
-        "Follower growth % = ((Current - Previous) / Previous) x 100. Green = positive, Red = decline.",
+        f"Views & Engagement: all videos published within the selected month are fetched (up to {MONTH_SEARCH_CAP} scanned per channel) — not a fixed recent-N cap.",
+        "Engagement = Likes + Comments per video.",
+        "Follower growth % = ((Current − Previous) ÷ Previous) × 100. Green = positive, Red = decline. ~ marks an interpolated estimate.",
         "Video thumbnails embedded directly from YouTube CDN (img.youtube.com/vi/{id}/mqdefault.jpg).",
-        "PDF report generated with Python-built HTML/CSS slides, rendered via Chrome headless.",
-        "Report is auto-generated — all data refreshes each time this script is called.",
+        "PDF report generated with Python-built HTML/CSS slides, rendered via persistent headless Chrome (CDP).",
+        "Report is auto-generated — all data refreshes each time the report is generated.",
     ]
 
     items_html = "".join(
@@ -1758,7 +1828,7 @@ def slide_follower_trend(s, page):
     lines_svg = []
     end_labels = []
 
-    svg_w, svg_h = 920, 390
+    svg_w, svg_h = 920, 470
     pad_l, pad_r, pad_t, pad_b = 60, 80, 20, 50
     chart_w = svg_w - pad_l - pad_r
     chart_h = svg_h - pad_t - pad_b
@@ -1803,7 +1873,8 @@ def slide_follower_trend(s, page):
         pct_val = min_pct + level * y_range
         gy = y_coord(pct_val)
         grid_svg.append(f'<line x1="{pad_l}" y1="{gy}" x2="{pad_l+chart_w}" y2="{gy}" stroke="#f0f2f5" stroke-width="1" stroke-dasharray="4,3"/>')
-        grid_svg.append(f'<text x="{pad_l-6}" y="{gy+4}" text-anchor="end" font-size="10" fill="#999">+{pct_val:.0f}%</text>')
+        sign = "+" if pct_val > 0 else ""
+        grid_svg.append(f'<text x="{pad_l-6}" y="{gy+4}" text-anchor="end" font-size="10" fill="#999">{sign}{pct_val:.0f}%</text>')
 
     # Axes
     grid_svg.append(f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{pad_t+chart_h}" stroke="#e0e4ed" stroke-width="1"/>')
@@ -1825,7 +1896,8 @@ def slide_follower_trend(s, page):
         # Collect end label: (raw_y, color, short_name, value_str)
         last_y = y_coord(series[-1])
         short  = brand.replace("Markets By Zerodha", "Mkt.Zerodha")[:12]
-        end_labels.append([last_y, color, short, f"+{series[-1]:.1f}%", False])
+        sign = "+" if series[-1] >= 0 else ""
+        end_labels.append([last_y, color, short, f"{sign}{series[-1]:.1f}%", False])
 
     # Draw Kotak Neo last (bold, highlighted)
     if "Kotak Neo" in brand_series:
@@ -1838,7 +1910,8 @@ def slide_follower_trend(s, page):
             sw = "" if i < len(series)-1 else ' stroke="white" stroke-width="2"'
             lines_svg.append(f'<circle cx="{xp}" cy="{yp}" r="{r}" fill="#003087"{sw}/>')
         last_y = y_coord(series[-1])
-        end_labels.append([last_y, "#003087", "Kotak Neo", f"+{series[-1]:.1f}%", True])
+        sign = "+" if series[-1] >= 0 else ""
+        end_labels.append([last_y, "#003087", "Kotak Neo", f"{sign}{series[-1]:.1f}%", True])
 
     # De-overlap end labels: sort by y, push apart if within 13px
     end_labels.sort(key=lambda x: x[0])
@@ -1851,9 +1924,9 @@ def slide_follower_trend(s, page):
     for (ly, color, short, val_str, is_kotak) in end_labels:
         lx = pad_l + chart_w + 5
         if is_kotak:
-            label_svgs.append(f'<text x="{lx}" y="{ly+4}" font-size="11" font-weight="700" fill="{color}">{val_str}</text>')
+            label_svgs.append(f'<text x="{lx}" y="{ly+4}" font-size="11" font-weight="700" fill="{color}">{short} {val_str}</text>')
         else:
-            label_svgs.append(f'<text x="{lx}" y="{ly+4}" font-size="10" fill="{color}">{short}</text>')
+            label_svgs.append(f'<text x="{lx}" y="{ly+4}" font-size="10" fill="{color}">{short} {val_str}</text>')
 
     svg = f"""<svg width="{svg_w}" height="{svg_h}" viewBox="0 0 {svg_w} {svg_h}" style="overflow:visible;font-family:Inter,sans-serif;">
       {''.join(grid_svg)}
@@ -1863,17 +1936,22 @@ def slide_follower_trend(s, page):
 
     # Sidebar: current month gain per brand
     kotak_curr = st["Kotak Neo"]["subscribers"]
-    kotak_prev = st["Kotak Neo"]["prev_subs"] or kotak_curr
-    kotak_gain = kotak_curr - kotak_prev
+    kotak_prev = st["Kotak Neo"]["prev_subs"] or None
+    kotak_gain = (kotak_curr - kotak_prev) if kotak_prev else None
 
     sidebar_rows = ""
     for brand in BRANDS:
         curr = st[brand]["subscribers"]
-        prev = st[brand]["prev_subs"] or curr
-        gain = curr - prev
+        prev = st[brand]["prev_subs"] or None
         color = brand_colors.get(brand, "#888")
-        gain_color = "#16a34a" if gain >= 0 else "#dc2626"
-        gain_str = f"+{fmt(gain)}" if gain >= 0 else fmt(gain)
+        if prev:
+            gain = curr - prev
+            gain_color = "#16a34a" if gain >= 0 else "#dc2626"
+            gain_str = (f"+{fmt(gain)}" if gain > 0 else ("0" if gain == 0 else fmt(gain)))
+        else:
+            gain = 0
+            gain_color = "#999"
+            gain_str = "N/A"
         short = brand.replace("Markets By Zerodha", "Mkt.Zerodha")
         sidebar_rows += f"""
         <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;
@@ -1889,60 +1967,57 @@ def slide_follower_trend(s, page):
           </div>
         </div>"""
 
-    insight_brand = max(BRANDS, key=lambda b: st[b]["subscribers"] - (st[b]["prev_subs"] or st[b]["subscribers"]))
-    insight_gain  = fmt(st[insight_brand]["subscribers"] - (st[insight_brand]["prev_subs"] or 0))
+    brands_with_prev = [b for b in BRANDS if st[b]["prev_subs"]]
+    if brands_with_prev:
+        insight_brand = max(brands_with_prev, key=lambda b: st[b]["subscribers"] - st[b]["prev_subs"])
+        insight_gain  = fmt(st[insight_brand]["subscribers"] - st[insight_brand]["prev_subs"])
+    else:
+        insight_brand = BRANDS[0]
+        insight_gain  = None
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 {COMMON_CSS}
 <style>
-body{{background:#f7f9fc;}}
-.slide{{background:#fff;display:flex;flex-direction:column;}}
-.hdr{{background:#003087;padding:0 32px;height:72px;display:flex;align-items:center;
-       justify-content:space-between;flex-shrink:0;color:#fff;}}
-.acc{{height:4px;background:linear-gradient(90deg,#E31837,#003087);flex-shrink:0;}}
-.body{{flex:1;display:flex;overflow:hidden;}}
-.chart-area{{flex:1;padding:18px 20px 14px 28px;display:flex;flex-direction:column;}}
-.sidebar{{width:240px;background:#f8f9fc;border-left:1px solid #e8eaf0;
-          padding:18px 16px;display:flex;flex-direction:column;gap:7px;}}
-.ftr{{height:36px;border-top:3px solid #E31837;display:flex;align-items:center;
-      justify-content:space-between;padding:0 32px;flex-shrink:0;}}
-.ftr span{{font-size:11px;color:#888;}}
+.slide{{background:#fafbff;}}
+.accent-bar{{position:absolute;left:0;top:0;width:5px;height:100%;background:#003087;}}
+.main{{padding:22px 24px 46px 30px;display:flex;flex-direction:column;height:720px;}}
+.body{{flex:1;display:flex;overflow:hidden;margin-top:10px;}}
+.chart-area{{flex:1;padding:0 12px 0 4px;display:flex;flex-direction:column;}}
+.sidebar{{width:230px;background:#f8f9fc;border-left:1px solid #e8eaf0;border-radius:0 0 8px 0;
+          padding:14px 14px;display:flex;flex-direction:column;gap:6px;}}
 </style>
 </head>
 <body>
 <div class="slide">
-  <div class="hdr">
-    <div style="font-size:20px;font-weight:600;color:#fff;">YouTube Subscriber Growth Trend</div>
-    <div style="font-size:13px;opacity:0.7;color:#fff;">Content Observations · {month}</div>
-  </div>
-  <div class="acc"></div>
-  <div class="body">
-    <div class="chart-area">
-      <div style="font-size:19px;font-weight:700;color:#003087;margin-bottom:2px;">
-        Subscriber Growth — % Change from Baseline</div>
-      <div style="font-size:12px;color:#666;margin-bottom:10px;">
-        Normalized index · Kotak Neo highlighted · all 8 YouTube channels</div>
-      {svg}
-    </div>
-    <div class="sidebar">
-      <div style="font-size:13px;font-weight:700;color:#003087;margin-bottom:4px;
-                  text-transform:uppercase;letter-spacing:0.5px;">{curr_m} Net Gain</div>
-      {sidebar_rows}
-      <div style="margin-top:auto;padding:10px;background:#e8f0fe;border-radius:8px;
-                  border-left:3px solid #003087;">
-        <div style="font-size:11px;font-weight:700;color:#003087;margin-bottom:3px;">Key Insight</div>
-        <div style="font-size:11px;color:#333;line-height:1.5;">
-          <strong>{insight_brand}</strong> added the most subscribers this month.
-          Kotak Neo gained <strong>{fmt(kotak_gain)}</strong> subscribers.
+  <div class="accent-bar"></div>
+  <div class="main">
+    <div class="slide-tag">Subscriber Trends</div>
+    <div class="slide-title">YouTube Subscriber Growth Trend</div>
+    <div class="hline"></div>
+    <div class="body">
+      <div class="chart-area">
+        <div style="font-size:13px;font-weight:700;color:{C['blue']};margin-bottom:2px;">
+          % Change from Baseline · Kotak Neo highlighted · all 8 channels</div>
+        {svg}
+      </div>
+      <div class="sidebar">
+        <div style="font-size:11px;font-weight:700;color:{C['blue']};text-transform:uppercase;
+                    letter-spacing:0.5px;margin-bottom:2px;">{curr_m} Net Gain</div>
+        {sidebar_rows}
+        <div style="margin-top:auto;padding:8px 10px;background:#e8f0fe;border-radius:8px;
+                    border-left:3px solid {C['blue']};">
+          <div style="font-size:10px;font-weight:700;color:{C['blue']};margin-bottom:3px;">Key Insight</div>
+          <div style="font-size:11px;color:#333;line-height:1.5;">
+            {"<strong>" + insight_brand + "</strong> added the most subscribers this month (" + insight_gain + ")." if insight_gain else "No prior-month subscriber data available."}
+            {"Kotak Neo gained <strong>" + fmt(kotak_gain) + "</strong> subscribers." if kotak_gain else ("Kotak Neo had no net change in subscribers." if kotak_gain == 0 else "")}
+          </div>
         </div>
       </div>
     </div>
   </div>
-  <div class="ftr">
-    <span>Monthly Social Media Benchmarking Report · YouTube Subscriber Analysis</span>
-    <span>Kotak Securities · Slide {page}</span>
-  </div>
+  {FOOTER_HTML}
+  {page_num(page)}
 </div>
 </body></html>"""
 
@@ -1972,7 +2047,7 @@ def slide_engagement_rate(s, page):
     def er_rows(platform_er, label_prefix=""):
         sorted_brands = sorted(platform_er, key=platform_er.get, reverse=True)
         rows = ""
-        for brand in sorted_brands[:6]:
+        for brand in sorted_brands:
             er_val = platform_er[brand]
             pct_w  = int((er_val / max(platform_er.values())) * 100)
             color  = brand_colors.get(brand, "#888")
@@ -1999,65 +2074,93 @@ def slide_engagement_rate(s, page):
     yt_leader  = max(yt_er, key=yt_er.get)
     kotak_yt_rank = sorted(BRANDS, key=lambda b: yt_er[b], reverse=True).index("Kotak Neo") + 1
 
+    # Right-panel insight rows
+    insight_rows = ""
+    for brand in sorted(yt_er, key=yt_er.get, reverse=True):
+        is_k  = brand == "Kotak Neo"
+        color = brand_colors.get(brand, "#888")
+        short = brand.replace("Markets By Zerodha", "Mkt.Zerodha")
+        insight_rows += f"""
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    padding:6px 10px;border-radius:7px;
+                    background:{'#EEF4FF' if is_k else '#fff'};
+                    border:1px solid {'#c7d7f5' if is_k else '#eee'};
+                    {'font-weight:800;' if is_k else ''}">
+          <div style="display:flex;align-items:center;gap:7px;">
+            <div style="width:9px;height:9px;border-radius:50%;background:{color};flex-shrink:0;"></div>
+            <span style="font-size:12px;color:{'#003087' if is_k else '#333'};">
+              {'▶ ' if is_k else ''}{short}</span>
+          </div>
+          <span style="font-size:12px;font-weight:700;color:{'#003087' if is_k else '#555'};">
+            {yt_er[brand]:.2f}%</span>
+        </div>"""
+
+    kotak_er = yt_er["Kotak Neo"]
+    leader_er = yt_er[yt_leader]
+    gap_pct = leader_er - kotak_er
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 {COMMON_CSS}
 <style>
-body{{background:#f7f9fc;}}
-.slide{{background:#fff;display:flex;flex-direction:column;}}
-.hdr{{background:#003087;padding:0 32px;height:72px;display:flex;align-items:center;
-       justify-content:space-between;flex-shrink:0;color:#fff;}}
-.acc{{height:4px;background:linear-gradient(90deg,#E31837,#003087);flex-shrink:0;}}
-.body{{flex:1;padding:18px 32px 12px;display:flex;flex-direction:column;}}
-.grid3{{display:grid;grid-template-columns:1fr;gap:16px;flex:1;max-width:480px;margin:0 auto;}}
-.pcard{{background:#f8f9fc;border-radius:12px;padding:16px 18px;
-        display:flex;flex-direction:column;gap:10px;border:1px solid #e8eaf0;}}
-.phead{{display:flex;align-items:center;gap:10px;margin-bottom:4px;}}
-.picon{{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;
-        justify-content:center;font-size:13px;font-weight:900;color:#fff;flex-shrink:0;}}
-.pname{{font-size:14px;font-weight:700;color:#222;}}
-.plbl{{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;}}
-.ins{{border-radius:8px;padding:8px 12px;font-size:11px;color:#333;line-height:1.5;margin-top:auto;}}
-.ftr{{height:36px;border-top:3px solid #E31837;display:flex;align-items:center;
-      justify-content:space-between;padding:0 32px;flex-shrink:0;}}
-.ftr span{{font-size:11px;color:#888;}}
+.slide{{background:#fafbff;}}
+.accent-bar{{position:absolute;left:0;top:0;width:5px;height:100%;background:{C['purple']};}}
+.main{{padding:22px 24px 46px 30px;display:flex;flex-direction:column;height:720px;}}
+.body{{flex:1;display:flex;gap:0;overflow:hidden;margin-top:10px;}}
+.left{{flex:1;padding:0 20px 0 4px;display:flex;flex-direction:column;}}
+.right{{width:290px;background:#f8f9fc;border-left:1px solid #e8eaf0;
+        padding:14px 14px;display:flex;flex-direction:column;gap:6px;}}
 </style>
 </head>
 <body>
 <div class="slide">
-  <div class="hdr">
-    <div style="font-size:20px;font-weight:600;">Engagement Rate Analysis</div>
-    <div style="font-size:13px;opacity:0.7;">Content Observations · {month}</div>
-  </div>
-  <div class="acc"></div>
-  <div class="body">
-    <div style="font-size:19px;font-weight:700;color:#003087;margin-bottom:2px;">
-      Engagement Rate = Engagement ÷ Followers × 100</div>
-    <div style="font-size:12px;color:#666;margin-bottom:14px;">
-      Normalizes for audience size · reveals true content quality independent of follower count</div>
-    <div class="grid3">
-
-      <!-- YouTube -->
-      <div class="pcard">
-        <div class="phead">
-          <div class="picon" style="background:#FF0000;">▶</div>
-          <div><div class="pname">YouTube</div>
-               <div class="plbl">Engagement Rate · {month}</div></div>
+  <div class="accent-bar"></div>
+  <div class="main">
+    <div class="slide-tag">Engagement Quality</div>
+    <div class="slide-title">Engagement Rate Analysis</div>
+    <div class="hline"></div>
+    <div class="body">
+      <div class="left">
+        <div style="font-size:13px;font-weight:700;color:{C['blue']};margin-bottom:2px;">
+          Engagement Rate = Engagement ÷ Followers × 100</div>
+        <div style="font-size:12px;color:#666;margin-bottom:10px;">
+          Normalizes for audience size · reveals true content quality independent of follower count</div>
+      <div style="background:#f8f9fc;border-radius:12px;padding:16px 20px;
+                  border:1px solid #e8eaf0;flex:1;display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <div style="width:28px;height:28px;border-radius:7px;background:#FF0000;
+                      display:flex;align-items:center;justify-content:center;
+                      font-size:12px;font-weight:900;color:#fff;flex-shrink:0;">▶</div>
+          <div style="font-size:13px;font-weight:700;color:#222;">YouTube</div>
+          <div style="font-size:10px;color:#888;text-transform:uppercase;
+                      letter-spacing:0.5px;">Engagement Rate · {month}</div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:8px;flex:1;">{yt_er_rows}</div>
-        <div class="ins" style="background:{'#e8f0fe' if kotak_yt_rank <= 3 else '#fff3cd'};
-             border-left:3px solid {'#003087' if kotak_yt_rank <= 3 else '#f59e0b'};">
-          Kotak Neo ranks <strong>#{kotak_yt_rank}</strong> on YouTube ER.
-          {yt_leader} leads at {yt_er[yt_leader]:.2f}%.
+        {yt_er_rows}
+        <div style="background:{'#e8f0fe' if kotak_yt_rank <= 3 else '#fff3cd'};
+             border-left:3px solid {'#003087' if kotak_yt_rank <= 3 else '#f59e0b'};
+             border-radius:0 6px 6px 0;padding:8px 12px;font-size:11px;color:#333;
+             line-height:1.5;margin-top:auto;">
+          Kotak Neo ranks <strong>#{kotak_yt_rank}</strong> · {yt_leader} leads at {leader_er:.2f}%
+          · gap: {gap_pct:.2f}pp
         </div>
       </div>
-
+    </div>
+    <div class="right">
+      <div style="font-size:12px;font-weight:700;color:#003087;text-transform:uppercase;
+                  letter-spacing:0.5px;margin-bottom:2px;">Rankings</div>
+      {insight_rows}
+      <div style="margin-top:auto;background:#e8f0fe;border-radius:8px;
+                  padding:10px 12px;border-left:3px solid #003087;">
+        <div style="font-size:11px;font-weight:700;color:#003087;margin-bottom:3px;">What ER Measures</div>
+        <div style="font-size:11px;color:#333;line-height:1.5;">
+          Engagement ÷ Followers × 100. A higher ER means the audience actively engages —
+          not just watches. Kotak Neo at <strong>{kotak_er:.2f}%</strong> vs leader at <strong>{leader_er:.2f}%</strong>.
+        </div>
+      </div>
     </div>
   </div>
-  <div class="ftr">
-    <span>Monthly Social Media Benchmarking Report · Engagement Rate Analysis</span>
-    <span>Kotak Securities · Slide {page}</span>
-  </div>
+  {FOOTER_HTML}
+  {page_num(page)}
 </div>
 </body></html>"""
 
@@ -2172,7 +2275,7 @@ def slide_competitor_spotlight(s, page):
         krow("YT Engagement", kotak["eng_fmt"]) +
         krow("YT Posts",      str(kotak["posts"])) +
         krow("Subscribers",   kotak["subs_fmt"]) +
-        krow("Sub Growth",    sub_g, sub_g, sub_gc) +
+        krow("Sub Growth",    sub_g, "", sub_gc) +
         krow("Eng Rank",      f"#{k['engagement']} of 8") +
         krow("Views Rank",    f"#{k['views']} of 8")
     )
@@ -2181,66 +2284,59 @@ def slide_competitor_spotlight(s, page):
 <html><head><meta charset="utf-8">
 {COMMON_CSS}
 <style>
-body{{background:#f7f9fc;}}
-.slide{{background:#fff;display:flex;flex-direction:column;}}
-.hdr{{background:#003087;padding:0 32px;height:72px;display:flex;align-items:center;
-       justify-content:space-between;flex-shrink:0;color:#fff;}}
-.acc{{height:4px;background:linear-gradient(90deg,#E31837,#003087);flex-shrink:0;}}
-.body{{flex:1;display:flex;gap:0;}}
-.left{{flex:1;padding:18px 24px;display:flex;flex-direction:column;gap:12px;}}
-.right{{width:380px;background:#f8f9fc;border-left:1px solid #e8eaf0;
-        padding:18px 18px;display:flex;flex-direction:column;gap:10px;}}
-.ftr{{height:36px;border-top:3px solid #E31837;display:flex;align-items:center;
-      justify-content:space-between;padding:0 32px;flex-shrink:0;}}
-.ftr span{{font-size:11px;color:#888;}}
+.slide{{background:#fafbff;}}
+.accent-bar{{position:absolute;left:0;top:0;width:5px;height:100%;background:{C['red']};}}
+.main{{padding:22px 24px 46px 30px;display:flex;flex-direction:column;height:720px;}}
+.body{{flex:1;display:flex;gap:0;margin-top:10px;}}
+.left{{flex:1;padding:0 16px 0 4px;display:flex;flex-direction:column;gap:10px;}}
+.right{{width:360px;background:#f8f9fc;border-left:1px solid #e8eaf0;border-radius:0 0 8px 0;
+        padding:14px 16px;display:flex;flex-direction:column;gap:8px;}}
 </style>
 </head>
 <body>
 <div class="slide">
-  <div class="hdr">
-    <div style="font-size:20px;font-weight:600;">Competitor Spotlight</div>
-    <div style="font-size:13px;opacity:0.7;">Content Observations · {month}</div>
-  </div>
-  <div class="acc"></div>
-  <div class="body">
-    <div class="left">
-      <div>
-        <div style="font-size:19px;font-weight:700;color:#003087;">
-          What are top competitors doing differently?</div>
-        <div style="font-size:12px;color:#666;margin-top:2px;">
-          Strategic breakdown of standout brand performance — YouTube · {month}</div>
+  <div class="accent-bar"></div>
+  <div class="main">
+    <div class="slide-tag">Competitive Intelligence</div>
+    <div class="slide-title">Competitor Spotlight</div>
+    <div class="hline"></div>
+    <div class="body">
+      <div class="left">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:{C['blue']};">
+            What are top competitors doing differently?</div>
+          <div style="font-size:12px;color:#666;margin-top:2px;">
+            Strategic breakdown — YouTube · {month}</div>
+        </div>
+        {spotlight_cards}
+        <div style="background:#fef9c3;border-left:3px solid #f59e0b;border-radius:0 8px 8px 0;
+                    padding:9px 12px;font-size:11.5px;color:#333;line-height:1.6;">
+          <span style="font-size:10px;font-weight:700;color:#b45309;text-transform:uppercase;
+                       display:block;margin-bottom:3px;">Recommended Action for Kotak</span>
+          {eng_leader} leads with {st[eng_leader]['eng_fmt']} — analyse their top content themes
+          and test similar formats. Increasing posts from {kotak['posts']} toward
+          {st[eng_leader]['posts']} while maintaining quality could close the engagement gap.
+        </div>
       </div>
-      {spotlight_cards}
-      <div style="background:#fef9c3;border-left:3px solid #f59e0b;border-radius:0 8px 8px 0;
-                  padding:10px 12px;font-size:12px;color:#333;line-height:1.6;">
-        <span style="font-size:10px;font-weight:700;color:#b45309;text-transform:uppercase;
-                     display:block;margin-bottom:4px;">Recommended Action for Kotak</span>
-        Focus on video formats that consistently drive high engagement.
-        {eng_leader} leads with {st[eng_leader]['eng_fmt']} — analyse their top content themes
-        and test similar formats. Increasing posts from {kotak['posts']} toward
-        {st[eng_leader]['posts']} while maintaining quality could close the engagement gap.
-      </div>
-    </div>
-    <div class="right">
-      <div style="font-size:13px;font-weight:700;color:#003087;text-transform:uppercase;
-                  letter-spacing:0.5px;margin-bottom:2px;">Kotak Neo — {month}</div>
-      {kotak_rows}
-      <div style="margin-top:auto;background:#e8f0fe;border-radius:8px;
-                  padding:10px 12px;border-left:3px solid #003087;">
-        <div style="font-size:11px;font-weight:700;color:#003087;margin-bottom:4px;">
-          Content Efficiency Note</div>
-        <div style="font-size:11px;color:#333;line-height:1.6;">
-          Kotak Neo ranks <strong>#{k['engagement']}</strong> in engagement
-          and <strong>#{k['views']}</strong> in views.
-          {eng_leader} leads engagement with {st[eng_leader]['eng_fmt']} interactions.
+      <div class="right">
+        <div style="font-size:11px;font-weight:700;color:{C['blue']};text-transform:uppercase;
+                    letter-spacing:0.5px;margin-bottom:2px;">Kotak Neo — {month}</div>
+        {kotak_rows}
+        <div style="margin-top:auto;background:#e8f0fe;border-radius:8px;
+                    padding:9px 11px;border-left:3px solid {C['blue']};">
+          <div style="font-size:10px;font-weight:700;color:{C['blue']};margin-bottom:3px;">
+            Content Efficiency Note</div>
+          <div style="font-size:11px;color:#333;line-height:1.5;">
+            Kotak Neo ranks <strong>#{k['engagement']}</strong> in engagement
+            and <strong>#{k['views']}</strong> in views.
+            {eng_leader} leads engagement with {st[eng_leader]['eng_fmt']} interactions.
+          </div>
         </div>
       </div>
     </div>
   </div>
-  <div class="ftr">
-    <span>Monthly Social Media Benchmarking Report · Competitor Spotlight</span>
-    <span>Kotak Securities · Slide {page}</span>
-  </div>
+  {FOOTER_HTML}
+  {page_num(page)}
 </div>
 </body></html>"""
 
@@ -2314,37 +2410,25 @@ def slide_thematic_heatmap(s, page):
 <html><head><meta charset="utf-8">
 {COMMON_CSS}
 <style>
-body{{background:#f7f9fc;}}
-.slide{{background:#fff;display:flex;flex-direction:column;}}
-.hdr{{background:#003087;padding:0 32px;height:72px;display:flex;align-items:center;
-       justify-content:space-between;flex-shrink:0;color:#fff;}}
-.acc{{height:4px;background:linear-gradient(90deg,#E31837,#003087);flex-shrink:0;}}
-.body{{flex:1;padding:16px 28px 12px;display:flex;flex-direction:column;gap:10px;}}
+.slide{{background:#fafbff;}}
+.accent-bar{{position:absolute;left:0;top:0;width:5px;height:100%;background:{C['gold']};}}
+.main{{padding:22px 24px 46px 30px;display:flex;flex-direction:column;height:720px;}}
 table{{width:100%;border-collapse:collapse;}}
-thead th{{background:#003087;color:#fff;font-size:11px;font-weight:700;
+thead th{{background:{C['blue']};color:#fff;font-size:11px;font-weight:700;
           padding:9px 10px;text-align:center;}}
 thead th:first-child{{text-align:left;width:220px;}}
 .legend{{display:flex;gap:14px;align-items:center;}}
 .lb{{width:14px;height:14px;border-radius:3px;}}
-.ftr{{height:36px;border-top:3px solid #E31837;display:flex;align-items:center;
-      justify-content:space-between;padding:0 32px;flex-shrink:0;}}
-.ftr span{{font-size:11px;color:#888;}}
 </style>
 </head>
 <body>
 <div class="slide">
-  <div class="hdr">
-    <div style="font-size:20px;font-weight:600;">Thematic Performance Heatmap</div>
-    <div style="font-size:13px;opacity:0.7;">Content Observations · {month}</div>
-  </div>
-  <div class="acc"></div>
-  <div class="body">
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+  <div class="accent-bar"></div>
+  <div class="main">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
       <div>
-        <div style="font-size:19px;font-weight:700;color:#003087;">
-          Content Theme Performance — Kotak Neo (YouTube)</div>
-        <div style="font-size:12px;color:#666;">
-          Color intensity = performance strength · highlights what to scale vs drop</div>
+        <div class="slide-tag">Content Intelligence</div>
+        <div class="slide-title">Thematic Performance Heatmap</div>
       </div>
       <div class="legend">
         <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:#555;">
@@ -2357,6 +2441,9 @@ thead th:first-child{{text-align:left;width:220px;}}
           <div class="lb" style="background:#fef2f2;border:1px solid #fcc;"></div>Weak</div>
       </div>
     </div>
+    <div class="hline"></div>
+    <div style="font-size:12px;color:#666;margin:4px 0 8px;">
+      Kotak Neo (YouTube) · Color intensity = performance strength · ranked by views-per-post</div>
     <table>
       <thead>
         <tr>
@@ -2376,15 +2463,11 @@ thead th:first-child{{text-align:left;width:220px;}}
         {rows_html}
       </tbody>
     </table>
-    <div style="font-size:11px;color:#888;font-style:italic;margin-top:4px;">
-      *Themes classified per-video from Kotak Neo's actual {month} uploads by title keyword.
-      Ranked by views-per-post; full breakdown available via the Master Data export.
-    </div>
+    <div class="note">*Themes classified per-video from Kotak Neo's actual {month} uploads by title keyword.
+      Full breakdown available via the Master Data export.</div>
   </div>
-  <div class="ftr">
-    <span>Monthly Social Media Benchmarking Report · Thematic Heatmap</span>
-    <span>Kotak Securities · Slide {page}</span>
-  </div>
+  {FOOTER_HTML}
+  {page_num(page)}
 </div>
 </body></html>"""
 
@@ -2982,11 +3065,11 @@ def build_pdf_report(month=None):
         p+=1  # 9-16
 
     slides.append(slide_growth(summary, p));               p+=1  # 17
-    slides.append(slide_methodology(summary, p));          p+=1  # 18
-    slides.append(slide_follower_trend(summary, p));       p+=1  # 19
-    slides.append(slide_engagement_rate(summary, p));      p+=1  # 20
-    slides.append(slide_competitor_spotlight(summary, p)); p+=1  # 21
-    slides.append(slide_thematic_heatmap(summary, p));     p+=1  # 22
+    slides.append(slide_follower_trend(summary, p));       p+=1  # 18
+    slides.append(slide_engagement_rate(summary, p));      p+=1  # 19
+    slides.append(slide_competitor_spotlight(summary, p)); p+=1  # 20
+    slides.append(slide_thematic_heatmap(summary, p));     p+=1  # 21
+    slides.append(slide_methodology(summary, p));          p+=1  # 22
     slides.append(slide_thank_you(p))                            # 23
 
     print(f"  {len(slides)} slides built")
