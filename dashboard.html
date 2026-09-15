@@ -168,15 +168,9 @@ input[type="date"].form-select::-webkit-calendar-picker-indicator{filter:invert(
 
 <header class="header">
   <div class="header-left">
-    <div class="logo-badge">KN</div>
     <div>
       <div class="logo-title">PDF Report <span>Generator</span></div>
-      <div class="logo-sub">Kotak Neo · YouTube Competitor Intelligence</div>
     </div>
-  </div>
-  <div class="status-pill">
-    <span class="status-dot" id="api-status-dot"></span>
-    <span id="api-status-text">Checking…</span>
   </div>
 </header>
 
@@ -186,13 +180,13 @@ input[type="date"].form-select::-webkit-calendar-picker-indicator{filter:invert(
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       PDF Report<span class="tab-badge" id="badge-pdf"></span>
     </button>
-    <button class="tab-btn" onclick="switchTab('export',this)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      Export Sheet<span class="tab-badge" id="badge-export"></span>
-    </button>
     <button class="tab-btn" onclick="switchTab('master',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
       Master Data<span class="tab-badge" id="badge-master"></span>
+    </button>
+    <button class="tab-btn" onclick="switchTab('export',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Export Sheet<span class="tab-badge" id="badge-export"></span>
     </button>
   </div>
 </nav>
@@ -840,8 +834,6 @@ initDatePickers();
 loadReports();
 initMasterDataTab();
 loadExportFiles();
-pingApiStatus();
-setInterval(pingApiStatus, 30000);
 </script>
 </body>
 </html>
